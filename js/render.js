@@ -231,7 +231,28 @@ function modelPort(level) {
   g.add(box(0.14, 0.1, 0.1, 0x8e979f, 0.24, 0.025, -0.14));
   return g;
 }
-const MODELS = { housing: modelHousing, mine: modelMine, goldmine: modelGoldmine, raremine: modelRaremine, refinery: modelRefinery, power: modelPower, electronics: modelElectronics, steelworks: modelSteelworks, farm: modelFarm, hydro: modelHydro, warehouse: modelWarehouse, port: modelPort };
+function modelEmbassy(level) {
+  const g = new THREE.Group();
+  g.add(pad(0.66, 0.54, 0x8a8f96));
+  g.add(box(0.44, 0.12 + 0.03 * Math.min(level, 3), 0.28, 0xe3dfd2, 0, 0.025, 0));
+  g.add(box(0.5, 0.025, 0.34, 0x9a3a32, 0, 0.14 + 0.03 * Math.min(level, 3), 0));
+  for (let i = 0; i < 4; i++) g.add(box(0.025, 0.1, 0.025, 0xf1efe8, -0.15 + i * 0.1, 0.025, 0.16));
+  g.add(cyl(0.008, 0.34, 0xcfd3d8, 0.27, 0.025, 0.2, 6));
+  g.add(box(0.1, 0.06, 0.008, 0xff9a2e, 0.32, 0.29, 0.2));
+  return g;
+}
+function modelMfa(level) {
+  const g = new THREE.Group();
+  g.add(pad(0.66, 0.54, 0x7d838a));
+  g.add(box(0.5, 0.16 + 0.03 * Math.min(level, 3), 0.3, 0xcfd3d6, 0, 0.025, 0));
+  g.add(box(0.2, 0.26 + 0.03 * Math.min(level, 3), 0.2, 0xb8bec4, 0, 0.025, -0.02));
+  g.add(box(0.24, 0.025, 0.24, 0x3d5f8a, 0, 0.29 + 0.03 * Math.min(level, 3), -0.02));
+  for (let i = 0; i < 5; i++) g.add(box(0.02, 0.12, 0.02, 0xf1efe8, -0.2 + i * 0.1, 0.025, 0.18));
+  g.add(cyl(0.008, 0.4, 0xcfd3d8, -0.28, 0.025, 0.2, 6));
+  g.add(box(0.12, 0.07, 0.008, 0x2f78b5, -0.22, 0.36, 0.2));
+  return g;
+}
+const MODELS = { embassy: modelEmbassy, mfa: modelMfa, housing: modelHousing, mine: modelMine, goldmine: modelGoldmine, raremine: modelRaremine, refinery: modelRefinery, power: modelPower, electronics: modelElectronics, steelworks: modelSteelworks, farm: modelFarm, hydro: modelHydro, warehouse: modelWarehouse, port: modelPort };
 
 function scaffold() {
   const g = new THREE.Group();

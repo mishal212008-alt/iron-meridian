@@ -2,11 +2,11 @@
 import {
   BASE_PRICE, BUILDINGS, BUILD_ORDER, CITY_LEVELS, DEPOSITS, ECON, LEVEL_COST_MULT, MAX_LEVEL, RES, START, STATES_DEF, STOCK_TARGET, TRADE_RES,
 } from './data.js';
-import { botDiplomacy, initDiplomacy, stepDiplomacy } from './diplomacy.js';
+import { botDiplomacy, embassyLevels, initDiplomacy, mfaLevels, migrateDiplomacy, stepDiplomacy } from './diplomacy.js';
 import { generateWorld, gridSample, mulberry32, territoryAt } from './world.js';
 
 export const SAVE_KEY = 'iron-meridian-save-v3';
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const emptyFlow = () => Object.fromEntries(RES.map((k) => [k, { prod: 0, cons: 0 }]));
@@ -113,7 +113,7 @@ const levelSum = (g, sid, key) => {
 };
 export function updateCaps(g, s) {
   s.cap = ECON.storageBase + levelSum(g, s.id, 'storage');
-  s.mcap = ECON.marketBase + levelSum(g, s.id, 'market');
+  s.mcap = Math.round((ECON.marketBase + levelSum(g, s.id, 'market')) * (s.mods ? s.mods.mcap : 1));
 }
 export const marketSellPrice = (res, stock) => BASE_PRICE[res] * clamp(STOCK_TARGET[res] / Math.max(stock, 1), ECON.sellFloor, 1);
 export const marketBuyPrice = (res, stock) => ECON.buyMarkup * BASE_PRICE[res] * (1 + Math.max(0, 1 - stock / STOCK_TARGET[res]) * 0.8);
@@ -128,12 +128,12 @@ export function marketTrade(g, s, res, amt, mode) {
   if (mode === 'sell') {
     amt = Math.min(amt, Math.floor(s[res]));
     if (amt <= 0) return { ok: false, msg: 'Нет на складе' };
-    const price = marketSellPrice(res, s[res]) * bonusOf(s, 'sell');
+    const price = marketSellPrice(res, s[res]) * bonusOf(s, 'sell') * (s.mods ? s.mods.sell : 1);
     const gain = amt * price;
     s[res] -= amt; s.money += gain; s.marketLeft -= amt; s.pend.sales += gain; s.stats.sold += amt;
     return { ok: true, msg: `Продано ${amt} по ${price.toFixed(2)}`, amt, money: gain };
   }
-  const price = marketBuyPrice(res, s[res]);
+  const price = marketBuyPrice(res, s[res]) * (s.mods ? s.mods.buy : 1);
   amt = Math.min(amt, Math.floor(s.money / price), Math.max(0, Math.floor(s.cap - s[res])));
   if (amt <= 0) return { ok: false, msg: s.money < price ? 'Не хватает денег' : 'Склад полон' };
   const cost = amt * price;
@@ -305,12 +305,12 @@ export function forecast(type, level = 1, p = null) {
   income += tax;
   if (d.energy < 0) income += -d.energy * level * ECON.energyValue;
   if (d.housing) income += d.housing * level * (ECON.taxPerPop + ECON.workerShare * ECON.taxPerJob * 0.5);
-  if (d.storage || d.market) income += 0; // косвенная польза
+  if (d.storage || d.market || d.influence) income += 0; // косвенная польза
   const upkeep = costOf(type, level).money * ECON.upkeepRate;
   const net = income - upkeep;
   const cost = costOf(type, level).money;
   parts.push(`налоги с работы ~${tax.toFixed(1)}`);
-  return { income, upkeep, net, payback: net > 0.05 ? cost / net : Infinity, indirect: !!(d.storage || d.market), parts };
+  return { income, upkeep, net, payback: net > 0.05 ? cost / net : Infinity, indirect: !!(d.storage || d.market || d.influence), parts };
 }
 
 // ---- один игровой день ----
@@ -451,7 +451,7 @@ function simulateState(g, s) {
     const st = staff.get(p.id);
     let raw = 1, rawName = '';
     if (def.consumes) for (const k of Object.keys(def.consumes)) { const r = ratioOf(k); if (r < raw) { raw = r; rawName = k; } }
-    const eff = st * grid * raw;
+    const eff = st * grid * raw * (s.mods ? s.mods.prod : 1);
     b.eff = eff;
     // причина простоя: самый слабый фактор
     const worst = Math.min(grid, st, raw);
@@ -487,7 +487,7 @@ function simulateState(g, s) {
       if (!BUILDINGS[b.type].produces && !isGen(b.type)) { b.eff = staff.get(p.id) * (BUILDINGS[b.type].energy > 0 ? eRatio : 1); b.limit = b.eff < 0.97 ? (staff.get(p.id) < eRatio ? { k: 'staff', text: 'нет рабочих' } : { k: 'energy', text: 'нет энергии' }) : null; }
       effJobs += BUILDINGS[b.type].jobs * b.level * clamp(b.eff, 0, 1);
     }
-    const tax = (p.pop * ECON.taxPerPop * (0.5 + 0.5 * eRatio) + effJobs * ECON.taxPerJob) * taxMult;
+    const tax = (p.pop * ECON.taxPerPop * (0.5 + 0.5 * eRatio) + effJobs * ECON.taxPerJob) * taxMult * (s.mods ? s.mods.tax : 1);
     s.money += tax; budget.tax += tax;
 
     const cap = housingCap(p);
@@ -580,6 +580,8 @@ function botWeight(g, s, p, type) {
     case 'goldmine': return s.energy.ratio < 0.7 ? 0.1 : s.gold > 1200 ? 0 : s.gold < 200 ? 1.6 : 0.4;
     case 'raremine': return s.energy.ratio < 0.7 ? 0.1 : s.rare > 900 ? 0 : s.rare < 150 ? 1.8 : 0.4;
     case 'warehouse': return TRADE_RES.some((k) => s[k] > s.cap * 0.8) ? 4 : 0;
+    case 'embassy': return s.money > 1800 && embassyLevels(g, s.id) < 2 && s.energy.ratio > 0.9 ? 0.7 : 0;
+    case 'mfa': return s.money > 5000 && mfaLevels(g, s.id) < 1 && s.energy.ratio > 0.9 ? 0.5 : 0;
     case 'port': return Object.values(s.overflow).some(Boolean) ? 1.2 : s.money > 3000 ? 0.4 : 0.05;
     case 'electronics':
       if (s.electronics > 400) return 0;
@@ -629,7 +631,7 @@ export function serialize(g) {
 }
 export function deserialize(text) {
   const d = JSON.parse(text);
-  if (d.v !== 3 && d.v !== 4) throw new Error('Неизвестная версия сохранения');
+  if (d.v !== 3 && d.v !== 4 && d.v !== 5) throw new Error('Неизвестная версия сохранения');
   const world = generateWorld(d.seed);
   const g = { ...d, v: SAVE_VERSION, world, nbrs: world.nbrs, events: [], feed: [] };
   g.rand = mulberry32((d.seed ^ 0xb07) + d.day * 7919);
@@ -647,6 +649,7 @@ export function deserialize(text) {
     for (const k of Object.keys(world.provs[i].deposits)) if (p.deposits[k] === undefined) p.deposits[k] = 0;
   });
   assignSpots(g);
+  migrateDiplomacy(g);
   for (const s of g.states) updateCaps(g, s);
   return g;
 }
@@ -659,7 +662,7 @@ export function moodOf(g, s) {
   for (const p of mine) { pop += p.pop; work += p.pop * ECON.workerShare; jobs += Math.min(jobsOf(p), p.pop * ECON.workerShare + (p.hired || 0)); }
   const employ = work > 0 ? Math.min(1, jobs / work) : 1;
   const m = 0.4 * Math.min(1, s.foodRatio) + 0.3 * Math.min(1, s.energy.ratio) + 0.3 * employ;
-  return Math.round(m * 100);
+  return Math.max(0, Math.round(m * 100 + (s.mods ? s.mods.mood : 0)));
 }
 export const totalPop = (g, s) => g.provs.reduce((a, p) => a + (p.owner === s.id ? p.pop : 0), 0);
 // доля самого заполненного склада

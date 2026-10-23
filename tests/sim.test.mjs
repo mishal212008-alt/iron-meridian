@@ -114,13 +114,17 @@ for (const seed of [1, 7, 42, 123, 999, 31337]) {
   r = propose(g, 0, 1, 'deal', { seller: 0, buyer: 1, res: 'gold', amt: 5, price: 6, days: 30 });
   ok(!r.ok, 'сделка через закрытую границу');
   setBorder(g, 0, 1, false);
-  // договоры
-  g.dip.rel[0][1] = g.dip.rel[1][0] = 50;
-  ok(propose(g, 0, 1, 'friend').ok && statusOf(g, 0, 1) === 'friend', 'дружба не заключилась');
-  g.dip.rel[0][1] = g.dip.rel[1][0] = 80;
-  ok(propose(g, 0, 1, 'ally').ok && statusOf(g, 0, 1) === 'ally', 'союз не заключился');
+  // договоры по лестнице
+  g.dip.trust[1][0] = 60; g.dip.trust[0][1] = 60;
+  r = propose(g, 0, 1, 'friend');
+  ok(r.ok && statusOf(g, 0, 1) === 'friend', 'дружба не заключилась: ' + JSON.stringify(r.reasons));
+  g.dip.trust[1][0] = 90; g.dip.inf[0] = 60;
+  r = propose(g, 0, 1, 'ally');
+  ok(r.ok && statusOf(g, 0, 1) === 'ally', 'союз не заключился: ' + JSON.stringify(r.reasons));
   ok(!setBorder(g, 0, 1, true).ok, 'союзнику нельзя закрыть границу');
-  ok(breakPact(g, 0, 1).ok && statusOf(g, 0, 1) === 'neutral', 'расторжение не сработало');
+  const rep0 = g.dip.rep[0].reliab;
+  ok(breakPact(g, 0, 1).ok && statusOf(g, 0, 1) === 'friend', 'расторжение союза');
+  ok(g.dip.rep[0].reliab < rep0, 'нарушение договора должно снижать репутацию');
   // война
   createDeal(g, { seller: 0, buyer: 1, res: 'gold', amt: 2, price: 6, days: 0 });
   ok(declareWar(g, 0, 1).ok && statusOf(g, 0, 1) === 'war', 'война не объявлена');
@@ -128,8 +132,9 @@ for (const seed of [1, 7, 42, 123, 999, 31337]) {
   ok(!setBorder(g, 0, 1, false).ok, 'во время войны границу открыть нельзя');
   // предложение игроку от бота
   const g2 = newGame({ seed: 22, playerState: 0 });
-  const rr = propose(g2, 2, 0, 'friend');
-  ok(rr.ok && g2.dip.offers.length === 1, 'бот должен оставить предложение игроку');
+  g2.dip.inf[1] = 50;
+  const rr = propose(g2, 1, 0, 'friend');
+  ok(rr.ok && g2.dip.offers.length === 1, 'бот должен оставить предложение игроку ' + JSON.stringify(rr));
   ok(answerOffer(g2, g2.dip.offers[0].id, false).ok && g2.dip.offers.length === 0, 'отклонение предложения');
   g2.states[0].money = 1000;
   ok(gift(g2, 0, 1, 100).ok, 'подарок');
@@ -212,10 +217,15 @@ function require_up(g, p) { return upgradeErr(g, p, 0) || ''; }
   d.v = 3; delete d.quests; delete d.feed;
   for (const st of d.states) { for (const k of ['ore', 'food', 'auto', 'budget', 'pend', 'cap', 'mcap', 'marketLeft', 'foodRatio', 'foodNeed', 'famine', 'overflow', 'stats']) delete st[k]; }
   for (const p of d.provs) delete p.hasRiver;
+  // старый формат дипломатии: статусы вместо договоров
+  const m4 = (v) => Array.from({ length: 4 }, () => Array(4).fill(v));
+  const oldSt = m4('neutral'); oldSt[0][1] = oldSt[1][0] = 'ally'; oldSt[2][3] = oldSt[3][2] = 'war';
+  d.dip = { rel: m4(10), status: oldSt, since: m4(0), closed: m4(false), deals: [], offers: [], nextId: 5, log: [], cool: {} };
   const g3 = deserialize(JSON.stringify(d));
+  ok(g3.dip.v === 5 && statusOf(g3, 0, 1) === 'ally' && statusOf(g3, 2, 3) === 'war', 'миграция дипломатии: статусы');
   for (let i = 0; i < 40; i++) tick(g3);
   const bad = g3.states.some((st) => ['money', 'steel', 'food', 'ore'].some((k) => !Number.isFinite(st[k]) || st[k] < 0));
-  ok(!bad && g3.v === 4 && g3.states[2].cap >= 2000, 'миграция сохранения v3 сломала экономику');
+  ok(!bad && g3.v === 5 && g3.states[2].cap >= 2000, 'миграция сохранения v3 сломала экономику');
 }
 
 console.log(fails === 0 ? 'ВСЕ ПРОВЕРКИ ПРОШЛИ' : `ПРОВАЛОВ: ${fails}`);

@@ -96,7 +96,7 @@ export function previewUrl(type, level = 1) {
     if (x) {
       const R = (cx, cy, w, h, col, r = 3) => { x.fillStyle = col; x.beginPath(); (x.roundRect || x.rect).call(x, cx, cy, w, h, r); x.fill(); };
       const C = (cx, cy, r, col) => { x.fillStyle = col; x.beginPath(); x.arc(cx, cy, r, 0, 7); x.fill(); };
-      const grd = { farm: '#8a9a52', hydro: '#4b7f9a', warehouse: '#6c7178', port: '#4a6f84', housing: '#7c8a4e', mine: '#6b5a44', goldmine: '#6b5a44', raremine: '#55506b', refinery: '#555a60', power: '#6a7078', steelworks: '#55504a', electronics: '#5a6a78' }[type] || '#666';
+      const grd = { farm: '#8a9a52', hydro: '#4b7f9a', warehouse: '#6c7178', port: '#4a6f84', housing: '#7c8a4e', mine: '#6b5a44', goldmine: '#6b5a44', raremine: '#55506b', refinery: '#555a60', power: '#6a7078', steelworks: '#55504a', electronics: '#5a6a78', embassy: '#6a6f78', mfa: '#4f5f78' }[type] || '#666';
       R(4, 4, 88, 88, grd, 14);
       const n = Math.min(level, 3);
       if (type === 'housing') { for (let i = 0; i < 3 + n; i++) R(12 + (i % 3) * 26, 14 + Math.floor(i / 3) * 34, 22, 26, ['#c4553f', '#4f7ec2', '#9aa0a6', '#9a6b48'][i % 4], 4); }
@@ -109,6 +109,7 @@ export function previewUrl(type, level = 1) {
       else if (type === 'power') { for (let i = 0; i < 1 + n; i++) C(26 + i * 24, 28, 14, '#d4d6da'); C(70, 66, 8, '#b83a30'); R(12, 56, 44, 26, '#a9b2ba', 3); }
       else if (type === 'steelworks') { C(28, 30, 12, '#8b4a3a'); R(48, 18, 36, 14, '#6f757b', 3); R(12, 56, 70, 20, '#474c52', 3); C(72, 40, 7, '#ff7a1a'); }
       else if (type === 'electronics') { R(12, 22, 56, 26, '#cdd2d8', 3); for (let i = 0; i < 4; i++) R(14 + i * 14, 24, 10, 22, '#9aa3ab', 2); R(70, 40, 16, 28, '#8db2cc', 3); R(12, 58, 60, 12, '#39424c', 3); }
+      else if (type === 'embassy' || type === 'mfa') { R(14, 30, 68, 40, '#e3dfd2', 4); R(10, 22, 76, 10, '#9a3a32', 2); for (let i = 0; i < 4; i++) R(20 + i * 15, 38, 7, 26, '#f1efe8', 1); R(70, 8, 3, 28, '#cfd3d8', 1); R(72, 8, 14, 9, type === 'mfa' ? '#2f78b5' : '#ff9a2e', 1); }
       for (let i = 0; i < n; i++) { x.fillStyle = '#ff9a2e'; x.fillRect(8 + i * 10, 86, 8, 5); }
       url = c.toDataURL();
     }
@@ -131,6 +132,7 @@ function ratesText(type, level) {
   if (d.energy < 0) parts.push(`+${-d.energy * level}${RES_ICON.energy}`);
   if (d.energy > 0) parts.push(`−${d.energy * level}${RES_ICON.energy}`);
   if (d.housing) parts.push(`🏠${d.housing * level}`);
+  if (d.influence) parts.push(`+${d.influence * level}🕊️`);
   parts.push(`👷${d.jobs * level}`);
   return parts.join(' ');
 }
@@ -284,7 +286,7 @@ export function buildHtml(g, p) {
     else if (!mineCities.some(free)) why = 'Нет свободных мест: города должны вырасти';
     else if (!afford) why = 'Не хватает: ' + Object.entries(cost).filter(([k, v]) => s[k] < v).map(([k, v]) => `${RES_ICON[k]}${fmt(v - s[k])}`).join(' ');
     const fc = forecast(type, 1, mineSel ? p : (d.needs ? { deposits: { [d.needs]: 1 } } : null));
-    const fcTxt = fc.indirect ? 'польза косвенная: больше склад / торговля'
+    const fcTxt = fc.indirect ? 'польза косвенная: склад, торговля, влияние'
       : fc.net > 0.05 ? `+${fc.net.toFixed(1)}💰/день · окупится за ~${Math.round(fc.payback)} дн.` : fc.net < -0.05 ? `${fc.net.toFixed(1)}💰/день: окупается косвенно` : 'окупаемость косвенная';
     html += `<div class="bcard">
         <div class="brow pv" style="border:0;background:none;padding:0;margin:0">${pvImg(type)}<div class="binfo"><div class="bt"><b>${d.name}</b></div>

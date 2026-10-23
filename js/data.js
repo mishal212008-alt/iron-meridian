@@ -47,13 +47,13 @@ export const DEPOSIT_KINDS = Object.keys(DEPOSITS);
 // Вымышленные государства (без реальных флагов и названий)
 export const STATES_DEF = [
   { id: 0, name: 'Нордия', color: '#5b8fd9', desc: 'Холодный север: много руды и редких металлов, мало нефти, нет золота.',
-    deposits: { steel: 'A', rare: 'A', oil: 'S', gold: 0 }, trait: { greed: 1.0, hostile: 0.5 }, bonus: { ore: 1.15 }, perk: '+15% к добыче руды' },
+    deposits: { steel: 'A', rare: 'A', oil: 'S', gold: 0 }, trait: { greed: 1.0, hostile: 0.5 }, pers: { aggr: 0.5, honor: 0.7, greed: 0.5, caution: 0.6, ideo: 'order' }, bonus: { ore: 1.15 }, perk: '+15% к добыче руды' },
   { id: 1, name: 'Аурелия', color: '#d9a441', desc: 'Торговая республика: золото и нефть, но нет руды.',
-    deposits: { gold: 'A', oil: 'A', rare: 'S', steel: 0 }, trait: { greed: 1.25, hostile: 0.2 }, bonus: { tax: 1.15, sell: 1.15 }, perk: '+15% к налогам и продажам' },
+    deposits: { gold: 'A', oil: 'A', rare: 'S', steel: 0 }, trait: { greed: 1.25, hostile: 0.2 }, pers: { aggr: 0.2, honor: 0.45, greed: 0.85, caution: 0.7, ideo: 'trade' }, bonus: { tax: 1.15, sell: 1.15 }, perk: '+15% к налогам и продажам' },
   { id: 2, name: 'Каспия', color: '#c4574f', desc: 'Нефтяная федерация: нефть и руда, нет редких металлов.',
-    deposits: { oil: 'A', steel: 'A', gold: 'S', rare: 0 }, trait: { greed: 0.9, hostile: 0.8 }, bonus: { fuel: 1.15 }, perk: '+15% к выпуску топлива' },
+    deposits: { oil: 'A', steel: 'A', gold: 'S', rare: 0 }, trait: { greed: 0.9, hostile: 0.8 }, pers: { aggr: 0.8, honor: 0.4, greed: 0.6, caution: 0.3, ideo: 'order' }, bonus: { fuel: 1.15 }, perk: '+15% к выпуску топлива' },
   { id: 3, name: 'Венедия', color: '#6aa86a', desc: 'Лесной союз: золото и редкие металлы, мало нефти и руды.',
-    deposits: { gold: 'A', rare: 'A', steel: 'S', oil: 'S' }, trait: { greed: 1.0, hostile: 0.3 }, bonus: { growth: 1.1 }, perk: '+10% к росту населения' },
+    deposits: { gold: 'A', rare: 'A', steel: 'S', oil: 'S' }, trait: { greed: 1.0, hostile: 0.3 }, pers: { aggr: 0.25, honor: 0.8, greed: 0.45, caution: 0.55, ideo: 'freedom' }, bonus: { growth: 1.1 }, perk: '+10% к росту населения' },
 ];
 // 'A' — богатые недра (несколько месторождений), 'S' — одно скромное, 0 — нет совсем.
 
@@ -62,7 +62,59 @@ export const DIP_BASE = { '0-1': 15, '0-2': -25, '0-3': 10, '1-2': 5, '1-3': 28,
 export const DIP = {
   friendMin: 20, allyMin: 55, tradeBonus: 0.12, closedTension: 0.35,
   offerLife: 14, warPeaceDays: 40, giftRel: 6,
+  // --- модель отношений ---
+  halfLife: 70,           // период полураспада обид и услуг, дней
+  wTrust: 0.4, wInterest: 1, wThreat: 0.22, wRespect: 0.1, wBase: 0.5,
+  repStart: 62, repGain: 0.05, repViolation: 16, repSuddenWar: 11, aggrSuddenWar: 24, aggrWarWithCb: 6,
+  powerSmooth: 0.08,      // сглаживание мощи
+  // --- дипвес ---
+  infStart: 24, infCap: 120, infBase: 0.35, infPerEmbassy: 0.6, infPerMfa: 1.8, infPerAmb: 0.08,
+  ambBase: 2, ambPerEmbassy: 1,
+  // --- кризисы и война ---
+  ultDays: 7, callDays: [3, 7], crisisStepDays: 3, cbDays: 40, truceDays: 30, warCooldown: 45,
+  mobilizeCost: 0.04, blockadePort: 0.5, sanctionCut: 0.12, tributeShare: 0.1,
+  warDmg: 0.03, exhRate: 0.35,
+  // --- экономика ---
+  tradeAgreeCap: 0.15, tradeAgreeSell: 0.05, allyShareRate: 4, loanRate: 0.0012,
+  // --- события ---
+  eventEvery: 14, knowGain: 0.35, knowEmbassy: 0.6,
 };
+// Стоимость действий в очках влияния
+export const DIP_COST = {
+  relations: 3, amb: 2, gift: 3, deal: 1, trade: 4, friend: 5, nap: 4, defense: 8, offense: 10, ally: 12, protect: 14,
+  truce: 3, whitepeace: 3, peacetreaty: 4, aid: 3, loan: 4, mediate: 6, scout: 5, protest: 2, show: 5, ultimatum: 8, mobilize: 8, blockade: 10, sanction: 6, war: 0,
+};
+// Лестница договоров: условия, срок (0 — бессрочный), оговорки
+export const TREATIES = {
+  trade:   { name: 'Торговое соглашение', icon: '📦', days: 90, tier: 1, info: '+15% к лимиту торговли, +5% к цене продажи, граница открыта.' },
+  friend:  { name: 'Договор о дружбе', icon: '🤝', days: 0, tier: 1, info: 'Тёплые отношения, взаимная выгода от торговли.' },
+  nap:     { name: 'Пакт о ненападении', icon: '🕊️', days: 90, tier: 2, info: 'Стороны не нападают друг на друга. Не прекращает войну и не защищает от третьих стран.' },
+  defense: { name: 'Оборонный пакт', icon: '🛡️', days: 120, tier: 3, info: 'При нападении на партнёра вы получаете призыв о помощи.', clauses: ['binding', 'noChain'] },
+  offense: { name: 'Наступательный пакт', icon: '⚔️', days: 60, tier: 3, info: 'Совместная война против указанной цели.', needsTarget: true },
+  ally:    { name: 'Союз', icon: '🏛️', days: 0, tier: 4, info: 'Обязательная взаимная защита, общий рынок снабжения.' },
+  protect: { name: 'Протекторат', icon: '👑', days: 0, tier: 4, info: 'Покровитель защищает слабого и получает 10% его налогов. Вассал не вправе воевать и заключать договоры сам.' },
+  truce:   { name: 'Перемирие', icon: '🏳️', days: 30, tier: 0, info: 'Огонь прекращён на срок. После срока война заканчивается.' },
+  whitepeace: { name: 'Белый мир', icon: '☮️', days: 0, tier: 0, info: 'Война окончена без условий.' },
+  peacetreaty: { name: 'Мирный договор', icon: '📜', days: 90, tier: 0, info: 'Мир с контрибуцией и демилитаризованной зоной (боевая часть подключится вместе с армиями).' },
+};
+// Лестница эскалации
+export const ESCALATION = [
+  { id: 'protest', name: 'Протест', icon: '📣', info: 'Дипломатическая нота: цель знает о претензии.' },
+  { id: 'show', name: 'Демонстрация силы', icon: '🎖️', info: 'Показ мощи у границы. Стоит денег, пугает соседа.' },
+  { id: 'ultimatum', name: 'Ультиматум', icon: '⏳', info: 'Требование со сроком. Отказ даёт повод к войне.' },
+  { id: 'mobilize', name: 'Мобилизация', icon: '🚨', info: 'Обе страны несут расходы, производство падает.' },
+  { id: 'blockade', name: 'Блокада и эмбарго', icon: '🚢', info: 'Торговля цели режется, порты блокированы.' },
+  { id: 'war', name: 'Война', icon: '💥', info: 'Объявление войны.' },
+];
+// Сложность дипломатии ботов
+export const DIP_DIFF = {
+  easy:   { aggr: 0.55, lenient: 8, noise: 1.2, coalition: 0.6, event: 0.7 },
+  normal: { aggr: 1, lenient: 0, noise: 1, coalition: 1, event: 1 },
+  hard:   { aggr: 1.1, lenient: -4, noise: 0.45, coalition: 1.5, event: 1.15 },
+};
+export const PERS_NAMES = { aggr: 'Агрессивность', honor: 'Честь', greed: 'Жадность', caution: 'Осторожность', ideo: 'Идеология' };
+export const IDEO_NAMES = { trade: 'торговая', order: 'порядок', freedom: 'свобода' };
+
 
 export const TERRAIN = {
   plains: { name: 'Равнина', color: '#7e9a5a' },
@@ -124,6 +176,8 @@ export const BUILDINGS = {
     jobs: 40, energy: 1, storage: 3000,
     desc: 'Увеличивает лимит хранения каждого ресурса на 3000 за уровень.',
   },
+  embassy: { name: 'Посольский квартал', icon: '🏛️', desc: 'Даёт очки влияния и места для послов. Нужен для дипломатии.', cost: { money: 450, steel: 30 }, days: 8, jobs: 40, energy: 2, influence: 1 },
+  mfa: { name: 'Министерство иностранных дел', icon: '🕴️', desc: 'Много очков влияния: хватает на договоры, ультиматумы и посредничество.', cost: { money: 1300, steel: 70 }, days: 14, jobs: 80, energy: 4, influence: 3 },
   port: {
     name: 'Порт / торговый пост', icon: '⚓', cost: { money: 900, steel: 60 }, days: 10,
     jobs: 150, energy: 4, market: 120,
@@ -146,7 +200,7 @@ export const BUILDINGS = {
   },
 };
 
-export const BUILD_ORDER = ['housing', 'farm', 'power', 'hydro', 'mine', 'refinery', 'steelworks', 'electronics', 'goldmine', 'raremine', 'warehouse', 'port'];
+export const BUILD_ORDER = ['housing', 'farm', 'power', 'hydro', 'mine', 'refinery', 'steelworks', 'electronics', 'goldmine', 'raremine', 'warehouse', 'port', 'embassy', 'mfa'];
 
 // Города: уровень зависит от населения, определяет число слотов
 export const CITY_LEVELS = [
