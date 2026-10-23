@@ -105,9 +105,22 @@ export function stepTreaties(g) {
 // ---------- дипотношения и послы ----------
 export function establishTies(g, a, b) {
   const d = g.dip;
+  if (d.ties[a][b]) return { ok: false, msg: 'Отношения уже есть' };
   d.ties[a][b] = true; d.ties[b][a] = true;
   d.rev++;
   logDip(g, `${g.states[a].name} и ${g.states[b].name} установили дипломатические отношения`, false, a, b, 'rel');
+  return { ok: true, msg: 'Дипотношения установлены' };
+}
+// разведка: очки влияния -> знания о личности и силе
+export function scout(g, a, b) {
+  const d = g.dip;
+  if (!d.ties[a][b]) return { ok: false, msg: 'Нужны дипломатические отношения' };
+  if (d.know[a][b] >= 100) return { ok: false, msg: 'О них уже всё известно' };
+  if (!spend(g, a, DIP_COST.scout)) return { ok: false, msg: `Не хватает очков влияния (нужно ${DIP_COST.scout})` };
+  d.know[a][b] = Math.min(100, d.know[a][b] + 18 + (d.amb[a][b] ? 8 : 0));
+  if (g.rand() < 0.15) { feel(g, b, a, -6, 0, 'spy', 'разведка раскрыта'); d.rev++; return { ok: true, msg: 'Данные получены, но агентов заметили' }; }
+  d.rev++;
+  return { ok: true, msg: 'Разведданные получены' };
 }
 export function breakTies(g, a, b, by = a) {
   const d = g.dip;

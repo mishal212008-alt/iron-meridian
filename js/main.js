@@ -6,10 +6,8 @@ import { MapView } from './render.js';
 import { TEX, paintTerrainAsync } from './terrain.js';
 import { slots } from './sim.js';
 import { BUILDINGS, RES_ICON } from './data.js';
-import { alertsHtml, alertsOf, budgetHtml, buildHtml, cardHtml, cityHtml, dipHtml, flowHtml, fmt, prodHtml, resHtml, resbarHtml, ribbonHtml, stateHtml, startHtml } from './ui.js';
-import {
-  answerOffer, breakPact, cancelDeal, declareWar, fairPrice, gift, propose, setBorder, valueFor,
-} from './diplomacy.js';
+import { alertsHtml, alertsOf, budgetHtml, buildHtml, cardHtml, cityHtml, flowHtml, fmt, prodHtml, resHtml, resbarHtml, ribbonHtml, stateHtml, startHtml } from './ui.js';
+import { dipAction as dipActionImpl, dipColorOf, dipHtml, dipIncoming, dipLinks, dipSignature, newDipUi } from './dipui.js';
 
 const $ = (id) => document.getElementById(id);
 let game = null;
@@ -22,7 +20,8 @@ let last = 0;
 let looping = false;
 let panelDirty = false;
 let panelAt = 0;
-const dipUi = { target: -1, result: null, form: { dir: 'sell', res: 'gold', amt: 6, price: 6, days: 30 } };
+let dipUi = newDipUi();
+let dipSig = '';
 let placing = null; // { type, x, z, pid, err }
 let flowKey = 'steel';
 let sliding = false;
@@ -33,8 +32,8 @@ let fpsN = 0, fpsT = 0, mmDirty = true, mmAt = 0, mmBase = null;
 
 // ---- настройки (хранятся на устройстве) ----
 const SET_KEY = 'iron-meridian-settings';
-const settings = { speed: 1, autopause: false, sound: false, vibrate: true, quality: 'medium', fps: false, difficulty: 'normal', layers: { deposits: false, borders: true, energy: false, unemp: false } };
-try { Object.assign(settings, JSON.parse(localStorage.getItem(SET_KEY) || '{}')); settings.layers = Object.assign({ deposits: false, borders: true, energy: false, unemp: false }, settings.layers); } catch { /* пусто */ }
+const settings = { speed: 1, autopause: false, sound: false, vibrate: true, quality: 'medium', fps: false, difficulty: 'normal', layers: { deposits: false, borders: true, energy: false, unemp: false, dip: false } };
+try { Object.assign(settings, JSON.parse(localStorage.getItem(SET_KEY) || '{}')); settings.layers = Object.assign({ deposits: false, borders: true, energy: false, unemp: false, dip: false }, settings.layers); } catch { /* пусто */ }
 function saveSettings() { try { localStorage.setItem(SET_KEY, JSON.stringify(settings)); } catch { /* пусто */ } }
 const buzz = (ms = 15) => { if (settings.vibrate && navigator.vibrate) { try { navigator.vibrate(ms); } catch { /* пусто */ } } };
 let actx = null;
@@ -103,11 +102,13 @@ async function begin() {
   view.onTap = onTap;
   view.setQuality(settings.quality);
   view.unempOf = unemployment;
+  view.dipColor = (p) => dipColorOf(game, p);
+  view.dipLinks = () => dipLinks(game);
   applyLayers();
   $('fps').classList.toggle('hidden', !settings.fps);
   makeMinimap(px);
   placing = null;
-  dipUi.target = -1; dipUi.result = null;
+  dipUi = newDipUi(); dipSig = dipSignature(game);
   selected = -1;
   tab = null;
   speedIdx = settings.speed;
@@ -182,7 +183,7 @@ function select(id, focus = false) {
   if (id >= 0) {
     if (focus) view.focus(game.provs[id]);
     if (tab === null && wide()) tab = 'city';
-    if (tab === 'dip') { const o = game.provs[id].owner; if (o !== game.playerState) { dipUi.target = o; dipUi.result = null; } }
+    if (tab === 'dip') { const o = game.provs[id].owner; if (o !== game.playerState) { dipUi.target = o; dipUi.view = 'state'; dipUi.result = null; dipUi.confirm = null; } }
     else if (tab === 'prod' || tab === 'state' || tab === 'res') tab = 'city';
   }
   refreshPanel();
@@ -206,7 +207,7 @@ function refreshTop() {
   if (al !== alertSig) { alertSig = al; $('alerts').innerHTML = al; }
   const fs = game.feed.length + ':' + (game.feed[0] ? game.feed[0].day + game.feed[0].text : '');
   if (fs !== feedSig) { feedSig = fs; $('ribbon').innerHTML = ribbonHtml(game); }
-  const nOff = game.dip.offers.filter((o) => o.to === game.playerState).length;
+  const nOff = dipIncoming(game).length;
   $('dip-badge').textContent = nOff; $('dip-badge').classList.toggle('hidden', !nOff);
   document.querySelectorAll('#speeds button').forEach((b) => {
     b.classList.toggle('on', Number(b.dataset.speed) === speedIdx);
@@ -260,6 +261,18 @@ function advanceDay() {
   const badBefore = new Set(alertsOf(game).filter((a) => a.kind === 'bad').map((a) => a.text.slice(0, 6)));
   tick(game);
   for (const e of game.events.splice(0)) toast(e);
+  { // входящие предложения, ультиматумы и призывы: срочное ставит на паузу всегда
+    const sig = dipSignature(game);
+    if (sig !== dipSig) {
+      const old = new Set(dipSig.split(','));
+      const fresh = dipIncoming(game).filter((i) => !old.has(i.type + i.id + (i.c ? i.c.step : '')));
+      dipSig = sig;
+      if (fresh.length) {
+        buzz(40); beep(520);
+        if (fresh.some((i) => i.crit) || (settings.autopause && speedIdx > 0)) { speedIdx = 0; toast('⏸ Требуется ответ: дипломатия'); }
+      }
+    }
+  }
   if (game.day % 10 === 0) save();
   if (settings.autopause && speedIdx > 0) {
     const newEv = game.feed.length && game.feed[0] !== before;
@@ -364,7 +377,7 @@ function drawMinimap() {
 }
 
 // ---- слои карты ----
-const LAYERS = [['deposits', '⛏ Месторождения'], ['borders', '🚧 Границы'], ['energy', '⚡ Энергия и занятость'], ['unemp', '🔥 Безработица']];
+const LAYERS = [['deposits', '⛏ Месторождения'], ['borders', '🚧 Границы'], ['energy', '⚡ Энергия и занятость'], ['unemp', '🔥 Безработица'], ['dip', '🤝 Дипломатия']];
 function layerBoxHtml() {
   return LAYERS.map(([k, n]) => `<label><input type="checkbox" data-layer="${k}" ${settings.layers[k] ? 'checked' : ''}>${n}</label>`).join('');
 }
@@ -393,34 +406,10 @@ function settingsHtml() {
 // ---- события ----
 
 function dipAction(act, el) {
-  const me = game.playerState, t = dipUi.target, f = dipUi.form;
-  const res = (r) => { dipUi.result = r; };
-  if (act === 'dip-open') { tab = 'dip'; dipUi.target = Number(el.dataset.id); dipUi.result = null; if (placing) stopPlacing(); }
-  else if (act === 'dip-back') { dipUi.target = -1; dipUi.result = null; }
-  else if (act === 'offer-yes' || act === 'offer-no') {
-    const r = answerOffer(game, Number(el.dataset.id), act === 'offer-yes');
-    toast(r.msg);
-  } else if (act === 'dip-border') res(setBorder(game, me, t, el.dataset.closed === '1'));
-  else if (act === 'dip-pact') res(propose(game, me, t, el.dataset.kind));
-  else if (act === 'dip-break') { if (confirm('Расторгнуть договор? Отношения ухудшатся.')) res(breakPact(game, me, t)); }
-  else if (act === 'dip-war') { if (confirm('Объявить войну? Границы закроются, сделки расторгнутся, союзники отвернутся.')) res(declareWar(game, me, t)); }
-  else if (act === 'dip-gift') res(gift(game, me, t, 100));
-  else if (act === 'dip-cancel') { cancelDeal(game, Number(el.dataset.id), me); dipUi.result = { ok: true, msg: 'Сделка расторгнута', reasons: [] }; }
-  else if (act === 'dip-dir') { f.dir = el.dataset.dir; }
-  else if (act === 'dip-res') { f.res = el.dataset.res; f.price = Math.round(fairPrice(f.res) * 2) / 2; }
-  else if (act === 'dip-amt') f.amt = Math.max(2, Math.min(60, f.amt + Number(el.dataset.d)));
-  else if (act === 'dip-price') f.price = Math.max(0.5, Math.round((f.price + Number(el.dataset.d)) * 10) / 10);
-  else if (act === 'dip-days') f.days = Number(el.dataset.days);
-  else if (act === 'dip-hint') { f.res = el.dataset.res; f.dir = el.dataset.dir; f.price = Number(el.dataset.price); }
-  else if (act === 'dip-send') {
-    const seller = f.dir === 'sell' ? me : t, buyer = f.dir === 'sell' ? t : me;
-    if (game.states[seller][f.res] < f.amt) { res({ ok: false, msg: 'У продавца не хватает товара на складе', reasons: [] }); }
-    else {
-      const r = propose(game, me, t, 'deal', { seller, buyer, res: f.res, amt: f.amt, price: f.price, days: f.days });
-      res(r);
-      if (r.ok) toast('🤝 ' + r.msg);
-    }
-  }
+  if (act === 'dip-open' && placing) stopPlacing();
+  if (act === 'dip-open') tab = 'dip';
+  dipActionImpl(game, dipUi, act, el, { toast });
+  dipSig = dipSignature(game);
   refreshAll();
 }
 
@@ -528,7 +517,10 @@ document.addEventListener('click', (e) => {
     if (confirm('Начать новую игру? Несохранённый прогресс пропадёт.')) { showStart(); }
   } else if (act === 'fit') {
     if (view) view.fit();
-  } else if (act.startsWith('dip-') || act.startsWith('offer-')) {
+  } else if (act === 'dip-fly') {
+    const pid = Number(el.dataset.pid);
+    if (pid >= 0 && view) view.focus(game.provs[pid]);
+  } else if (act.startsWith('dip-') || act.startsWith('offer-') || act.startsWith('call-')) {
     dipAction(act, el);
   }
 });

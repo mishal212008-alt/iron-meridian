@@ -334,6 +334,7 @@ export function interdependence(g, a, b) {
 // ---------- ежедневное обновление ядра ----------
 export function stepCore(g) {
   const d = g.dip;
+  if (g.day % 6 === 0 || !d.rel1) { d.rel1 = d.rel0 || d.rel.map((r) => r.slice()); d.rel0 = d.rel.map((r) => r.slice()); }
   updatePower(g);
   for (let a = 0; a < N; a++) {
     d.inf[a] = Math.min(DIP.infCap, d.inf[a] + infIncome(g, a));
@@ -356,3 +357,5 @@ export function stepCore(g) {
     }
   }
 }
+
+export const relTrend = (g, a, b) => (g.dip.rel1 ? g.dip.rel[a][b] - g.dip.rel1[a][b] : 0);

@@ -184,7 +184,7 @@ function finish(g, from, to, kind, p, out) {
   out.score = Math.round(score * 10) / 10;
   out.p = Math.round(sigmoid(score / 9) * 100) / 100;
   out.accept = score >= 0;
-  const neg = out.factors.filter((f) => f.v < -1.2).sort((a, b) => a.v - b.v);
+  const neg = out.factors.filter((f) => f.v < -1.2 && f.label !== 'Порог согласия').sort((a, b) => a.v - b.v);
   out.reasons = out.accept ? ['Предложение выгодно'] : neg.slice(0, 3).map((f) => `${f.label} (${f.v})`);
   if (!out.accept && !out.reasons.length) out.reasons = ['Недостаточно выгод'];
   // встречное предложение: «согласен, если добавишь деньги»
@@ -261,7 +261,7 @@ export function applyOffer(g, from, to, kind, p = {}) {
   switch (kind) {
     case 'ties': establishTies(g, from, to); break;
     case 'deal': createDeal(g, p); logDip(g, `Сделка ${g.states[p.seller].name} → ${g.states[p.buyer].name}: ${RES_ICON[p.res]} ${p.amt}/дн. по ${money(p.price)}💰`, p.seller === g.playerState || p.buyer === g.playerState, p.seller, p.buyer, 'deal'); break;
-    case 'loan': grantLoan(g, p.lender, p.borrower, p.amount, p.days || 90); break;
+    case 'loan': d.inf[p.lender] += DIP_COST.loan; grantLoan(g, p.lender, p.borrower, p.amount, p.days || 90); break;
     case 'truce': case 'whitepeace': case 'peacetreaty': applyPeace(g, kind, from, to, { payer: p.payer, contrib: p.contrib, dmz: p.dmz }); break;
     case 'protect': signTreaty(g, 'protect', p.over, p.over === from ? to : from, {}); break;
     case 'offense': signTreaty(g, 'offense', from, to, { target: p.target, days: p.days }); break;
@@ -330,14 +330,15 @@ export function propose(g, from, to, kind, params = {}) {
   }
   const ck = offerCooldownKey(from, to, kind);
   const left = (d.cool[ck] || 0) - g.day;
-  if (left > 0 && from === g.playerState) return { ok: false, msg: `Повторить можно через ${left} дн.`, reasons: [] };
+  if (left > 0) return { ok: false, msg: `Повторить можно через ${left} дн.`, reasons: [] };
   const cost = costOf(kind);
   if (d.inf[from] < cost) return { ok: false, msg: `Не хватает очков влияния (нужно ${cost}, есть ${Math.floor(d.inf[from])})`, reasons: [] };
   const ev = evaluateOffer(g, from, to, kind, params);
   if (ev.hard) return { ok: false, msg: ev.hard, reasons: ev.reasons, eval: ev };
   spend(g, from, cost);
-  if (ev.accept) { applyOffer(g, from, to, kind, params); return { ok: true, msg: `${g.states[to].name} согласна`, reasons: ev.reasons, eval: ev }; }
+  if (ev.accept) { (d.stats ||= { prop: 0, acc: 0, ref: 0, byKey: {} }).acc++; applyOffer(g, from, to, kind, params); return { ok: true, msg: `${g.states[to].name} согласна`, reasons: ev.reasons, eval: ev }; }
   d.cool[ck] = g.day + (from === g.playerState ? 8 : 24);
+  { const st = (d.stats ||= { prop: 0, acc: 0, ref: 0, byKey: {} }); st.ref++; const arr = (st.byKey[ck] ||= []); arr.push(g.day); if (arr.length > 30) arr.shift(); }
   addTrust(g, to, from, -0.6);                     // настойчивые отказы слегка охлаждают
   return { ok: false, msg: `${g.states[to].name} отказывает`, reasons: ev.reasons, counter: ev.counter, eval: ev };
 }

@@ -392,7 +392,7 @@ export class MapView {
     this.floats = [];
     this.bars = [];
     this.pulseT = 0;
-    this.layers = { deposits: false, borders: true, energy: false, unemp: false };
+    this.layers = { deposits: false, borders: true, energy: false, unemp: false, dip: false };
     this.labelExtra = null;
 
     this.scene = new THREE.Scene();
@@ -1052,9 +1052,11 @@ export class MapView {
 
   updateHeat() {
     if (!this.g || !this.root) return;
-    if (!this.heat) { this.heat = new THREE.Group(); this.heat.visible = false; this.root.add(this.heat); this.heatMeshes = []; }
-    this.heat.visible = !!this.layers.unemp;
-    if (!this.layers.unemp) return;
+    if (!this.heat) { this.heat = new THREE.Group(); this.heat.visible = false; this.root.add(this.heat); this.heatMeshes = []; this.linkGroup = new THREE.Group(); this.root.add(this.linkGroup); }
+    const on = !!(this.layers.unemp || this.layers.dip);
+    this.heat.visible = on;
+    this.linkGroup.visible = !!this.layers.dip;
+    if (!on) return;
     if (!this.heatMeshes.length) {
       const geo = new THREE.CylinderGeometry(1, 1, 0.1, 28);
       for (const p of this.g.provs) {
@@ -1065,11 +1067,42 @@ export class MapView {
     }
     const c = new THREE.Color();
     this.g.provs.forEach((p, i) => {
-      const un = this.unempOf ? this.unempOf(p) : 0;
-      c.setHSL((1 - Math.min(1, un * 1.6)) * 0.33, 0.85, 0.5);
+      if (this.layers.dip && this.dipColor) c.setHex(this.dipColor(p));
+      else { const un = this.unempOf ? this.unempOf(p) : 0; c.setHSL((1 - Math.min(1, un * 1.6)) * 0.33, 0.85, 0.5); }
       this.heatMeshes[i].material.color.copy(c);
       this.heatMeshes[i].scale.set(2 + Math.sqrt(p.pop) / 30, 1, 2 + Math.sqrt(p.pop) / 30);
     });
+    if (this.layers.dip && this.dipLinks) this.updateLinks();
+  }
+
+  // стрелки между столицами: красные — война, оранжевые — напряжение, синие — союз
+  updateLinks() {
+    const grp = this.linkGroup;
+    while (grp.children.length) { const o = grp.children.pop(); o.material.dispose(); }
+    const COL = { war: 0xff3b30, tension: 0xff9a2e, bloc: 0x4a90e2 };
+    const boxG = this.linkBox || (this.linkBox = new THREE.BoxGeometry(1, 1, 1));
+    const triG = this.linkTri || (this.linkTri = new THREE.CylinderGeometry(1, 1, 1, 3));
+    for (const l of this.dipLinks()) {
+      const ax = l.a.x, az = l.a.z, bx = l.b.x, bz = l.b.z;
+      const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz);
+      if (len < 1) continue;
+      const y = Math.max(surfaceY(this.wd, ax, az), surfaceY(this.wd, bx, bz)) + 1.6;
+      const mat = new THREE.MeshBasicMaterial({ color: COL[l.kind], transparent: true, opacity: 0.85, depthWrite: false });
+      const bar = new THREE.Mesh(boxG, mat);
+      const w = l.kind === 'bloc' ? 0.35 : 0.6;
+      bar.position.set(ax + dx / 2, y, az + dz / 2);
+      bar.scale.set(w, 0.12, len - 3);
+      bar.rotation.y = Math.atan2(dx, dz);
+      grp.add(bar);
+      if (l.kind !== 'bloc') {
+        const head = new THREE.Mesh(triG, mat.clone());
+        head.position.set(bx - (dx / len) * 3, y, bz - (dz / len) * 3);
+        head.scale.set(1.5, 0.15, 1.5);
+        head.rotation.y = Math.atan2(dx, dz);
+        grp.add(head);
+      }
+    }
+    this.dirty = true;
   }
 
   zoomBy(f) {
@@ -1401,7 +1434,7 @@ export class MapView {
     this.animating = !this.headless && this.cam.dist < this.fitDist * 0.62;
     if (this.animating || !this.animStarted) { this.animStarted = true; this.updateCars(this.animating ? now : this.lastAnim || 0); if (this.animating) this.lastAnim = now; }
     this.updateCamera();
-    if (this.layers.unemp && this.heat && this.heat.visible && !this.heatTick) { this.heatTick = true; this.updateHeat(); setTimeout(() => { this.heatTick = false; }, 800); }
+    if ((this.layers.unemp || this.layers.dip) && this.heat && this.heat.visible && !this.heatTick) { this.heatTick = true; this.updateHeat(); setTimeout(() => { this.heatTick = false; }, 800); }
     this.updateLabels();
     if (this.labelsEl && !this.headless) { this.updateBars(); this.updateFloats(); }
     if (this.ring && this.ring.visible && this.quality !== 'low') {
