@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0f1419">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+  <title>Железный Меридиан</title>
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <div class="row1">
+        <button class="icon-btn" data-act="menu" aria-label="Меню">☰</button>
+        <div id="state-name"></div>
+        <div id="day"></div>
+        <div id="speeds">
+          <button data-speed="0" aria-label="Пауза">⏸</button>
+          <button data-speed="1" aria-label="Скорость 1">▶</button>
+          <button data-speed="2" aria-label="Скорость 2">⏩</button>
+          <button data-speed="3" aria-label="Скорость 4">⏭</button>
+        </div>
+      </div>
+      <div id="resbar"></div>
+    </header>
+    <canvas id="map"></canvas>
+    <button id="fit" class="icon-btn float" data-act="fit" aria-label="Показать всю карту">⤢</button>
+    <div id="toasts"></div>
+    <section id="sheet" class="hidden"></section>
+  </div>
+
+  <div id="start" class="overlay"></div>
+
+  <div id="menu" class="overlay hidden">
+    <div class="menu-box">
+      <h2>Меню</h2>
+      <button class="btn big" data-act="save">💾 Сохранить</button>
+      <button class="btn big" data-act="new">🆕 Новая игра</button>
+      <button class="btn big ghost" data-act="menu-close">Закрыть</button>
+      <p id="menu-ver" class="muted"></p>
+    </div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
