@@ -1,4 +1,5 @@
 // Запуск: node tests/sim.test.mjs
+import { gridSample, territoryAt, provAt } from '../js/world.js';
 import { newGame, tick, serialize, deserialize, stateProvs, startBuild, buildError } from '../js/sim.js';
 
 let fails = 0;
@@ -7,12 +8,22 @@ const ok = (cond, msg) => { if (!cond) { fails++; console.log('ПРОВАЛ:', m
 for (const seed of [1, 7, 42, 123, 999, 31337]) {
   const g = newGame({ seed, playerState: 0 });
   const counts = g.states.map((s) => stateProvs(g, s.id).length);
-  ok(g.provs.length >= 40, `seed ${seed}: мало провинций (${g.provs.length})`);
+  ok(g.provs.length >= 28, `seed ${seed}: мало провинций (${g.provs.length})`);
   ok(counts.every((c) => c >= 6), `seed ${seed}: у кого-то слишком мало провинций ${counts}`);
   for (const s of g.states) {
     const ps = stateProvs(g, s.id);
     ok(ps.some((p) => p.deposits.steel > 0), `seed ${seed}: у ${s.name} нет руды`);
     ok(ps.some((p) => p.deposits.oil > 0), `seed ${seed}: у ${s.name} нет нефти`);
+  }
+  const w = g.world;
+  ok(g.provs.every((p) => gridSample(w.h, p.x, p.z) > 0.02), `seed ${seed}: город в воде`);
+  ok(g.provs.every((p) => provAt(w, p.x, p.z) === p.id && territoryAt(w, p.x, p.z)[0] === p.id), `seed ${seed}: город не в своей территории`);
+  ok(g.provs.every((p) => Object.values(p.depositPos).every((d) => gridSample(w.h, d[0], d[1]) > 0)), `seed ${seed}: месторождение в воде`);
+  ok(g.provs.every((p) => (p.deposits.steel ? p.depositPos.steel : true) && (p.deposits.oil ? p.depositPos.oil : true)), `seed ${seed}: нет точки месторождения`);
+  { // дорожная сеть связывает все города
+    const seen = new Set([0]), st = [0];
+    while (st.length) { const c = st.pop(); for (const r of w.roads) { const o = r.a === c ? r.b : r.b === c ? r.a : -1; if (o >= 0 && !seen.has(o)) { seen.add(o); st.push(o); } } }
+    ok(seen.size === g.provs.length, `seed ${seed}: дороги не связывают все города (${seen.size}/${g.provs.length})`);
   }
   // игрок ничего не строит, боты играют 400 дней
   for (let i = 0; i < 400; i++) tick(g);

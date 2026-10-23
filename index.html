@@ -26,15 +26,23 @@
       </div>
       <div id="resbar"></div>
     </header>
-    <canvas id="map"></canvas>
-    <div id="toasts"></div>
-    <section id="sheet" class="hidden"></section>
-    <nav id="nav">
-      <button data-act="nav-prov"><span class="ni">🏙️</span><span>Провинция</span></button>
-      <button data-act="nav-econ"><span class="ni">📊</span><span>Экономика</span></button>
-      <button data-act="fit"><span class="ni">🗺️</span><span>Вся карта</span></button>
-      <button data-act="menu"><span class="ni">⚙️</span><span>Меню</span></button>
-    </nav>
+    <div id="main">
+      <div id="mapwrap">
+        <canvas id="map"></canvas>
+        <div id="labels"></div>
+        <div id="toasts"></div>
+        <div id="card" class="hidden"></div>
+      </div>
+      <aside id="panel" class="hidden"></aside>
+      <nav id="rail">
+        <button data-act="tab" data-tab="city"><span class="ni">🏙️</span><span>Город</span></button>
+        <button data-act="tab" data-tab="build"><span class="ni">🏗️</span><span>Строить</span></button>
+        <button data-act="tab" data-tab="prod"><span class="ni">🏭</span><span>Заводы</span></button>
+        <button data-act="tab" data-tab="state"><span class="ni">📊</span><span>Страна</span></button>
+        <button data-act="fit"><span class="ni">🗺️</span><span>Вся карта</span></button>
+        <button data-act="menu"><span class="ni">⚙️</span><span>Меню</span></button>
+      </nav>
+    </div>
   </div>
 
   <div id="start" class="overlay"></div>
@@ -43,7 +51,6 @@
     <div class="menu-box">
       <h2>Меню</h2>
       <button class="btn big" data-act="save">💾 Сохранить</button>
-      <button class="btn big ghost" data-act="shadows" id="btn-shadows">🌓 Тени: вкл</button>
       <button class="btn big ghost" data-act="new">🆕 Новая игра</button>
       <button class="btn big ghost" data-act="menu-close">Закрыть</button>
       <p id="menu-ver" class="muted"></p>

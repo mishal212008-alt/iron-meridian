@@ -3,30 +3,21 @@ import {
   SAVE_KEY, deserialize, demolish, newGame, serialize, startBuild, startUpgrade, tick,
 } from './sim.js';
 import { MapView } from './render.js';
-import { econHtml, resbarHtml, sheetHtml, startHtml } from './ui.js';
+import { TABS, buildHtml, cardHtml, cityHtml, prodHtml, resbarHtml, stateHtml, startHtml } from './ui.js';
 
 const $ = (id) => document.getElementById(id);
 let game = null;
 let view = null;
 let selected = -1;
-let panel = null; // 'prov' | 'econ' | null
+let tab = null; // 'city' | 'build' | 'prod' | 'state' | null
 let speedIdx = 1;
 let acc = 0;
 let last = 0;
 let looping = false;
+let panelDirty = false;
+let panelAt = 0;
 
-const SH_KEY = 'iron-meridian-shadows';
-function shadowsWanted() {
-  try {
-    const v = localStorage.getItem(SH_KEY);
-    if (v !== null) return v === '1';
-  } catch { /* нет доступа к хранилищу */ }
-  return !/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || ''); // на телефонах по умолчанию без теней
-}
-function setShadowsLabel() {
-  const on = view ? view.shadows : shadowsWanted();
-  $('btn-shadows').textContent = '🌓 Тени: ' + (on ? 'вкл' : 'выкл');
-}
+const wide = () => !!(window.matchMedia && window.matchMedia('(min-width: 900px)').matches);
 
 function hasSave() {
   try { return !!localStorage.getItem(SAVE_KEY); } catch { return false; }
@@ -46,8 +37,9 @@ function begin() {
   $('start').classList.add('hidden');
   $('menu').classList.add('hidden');
   if (!view) {
-    view = new MapView($('map'), game, { shadows: shadowsWanted() });
+    view = new MapView($('map'), game, { labels: $('labels') });
     if (view.webglError) toast('3D недоступно на этом устройстве (нет WebGL). Игра работает без картинки.');
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => view && view.resize()).observe($('mapwrap'));
   } else {
     view.setGame(game);
     view.resize();
@@ -55,9 +47,8 @@ function begin() {
   }
   view.onSelect = (id) => select(id);
   selected = -1;
-  panel = null;
+  tab = null;
   speedIdx = 1;
-  setShadowsLabel();
   refreshTop();
   const cap = game.provs[game.states[game.playerState].capital];
   select(cap.id, true);
@@ -67,9 +58,12 @@ function begin() {
 function select(id, focus = false) {
   selected = id;
   view.select(id);
-  panel = id >= 0 ? 'prov' : null;
-  if (focus && id >= 0) view.focus(game.provs[id]);
-  refreshSheet();
+  if (id >= 0) {
+    if (focus) view.focus(game.provs[id]);
+    if (tab === null && wide()) tab = 'city';
+    if (tab === 'prod' || tab === 'state') tab = 'city';
+  }
+  refreshPanel();
 }
 
 function refreshTop() {
@@ -83,24 +77,30 @@ function refreshTop() {
   });
 }
 
-function refreshSheet() {
-  const el = $('sheet');
-  if (panel === 'prov' && selected >= 0) {
+function refreshPanel() {
+  panelDirty = false;
+  panelAt = performance.now();
+  const el = $('panel');
+  const p = selected >= 0 ? game.provs[selected] : null;
+  document.querySelectorAll('#rail [data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+  $('app').classList.toggle('panel-open', !!tab);
+  if (tab) {
     const top = el.scrollTop;
-    el.innerHTML = sheetHtml(game, game.provs[selected]);
-    el.classList.remove('hidden');
-    el.scrollTop = top;
-  } else if (panel === 'econ') {
-    const top = el.scrollTop;
-    el.innerHTML = econHtml(game);
+    const html = tab === 'city' ? cityHtml(game, p)
+      : tab === 'build' ? buildHtml(game, p)
+        : tab === 'prod' ? prodHtml(game) : stateHtml(game);
+    el.innerHTML = html;
     el.classList.remove('hidden');
     el.scrollTop = top;
   } else {
     el.classList.add('hidden');
   }
+  // карточка выбранного города: пока панель закрыта
+  const card = $('card');
+  if (p && !tab) { card.innerHTML = cardHtml(game, p); card.classList.remove('hidden'); } else card.classList.add('hidden');
 }
 
-function refreshAll() { refreshTop(); refreshSheet(); if (view) view.dirty = true; }
+function refreshAll() { refreshTop(); refreshPanel(); if (view) view.dirty = true; }
 
 function toast(text) {
   const t = document.createElement('div');
@@ -116,7 +116,7 @@ function advanceDay() {
   for (const e of game.events.splice(0)) toast(e);
   if (game.day % 10 === 0) save();
   refreshTop();
-  if (panel) refreshSheet();
+  panelDirty = true;
   view.dirty = true;
 }
 
@@ -129,6 +129,7 @@ function loop(t) {
     while (acc >= 1 && n < 8) { acc -= 1; n++; advanceDay(); }
     if (n === 8) acc = 0;
   }
+  if (game && panelDirty && t - panelAt > 450) refreshPanel();
   if (view && view.dirty) view.draw();
   requestAnimationFrame(loop);
 }
@@ -139,48 +140,44 @@ document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]');
   if (!el) return;
   const act = el.dataset.act;
+  const prov = selected >= 0 ? game && game.provs[selected] : null;
   if (act === 'pick') {
     game = newGame({ playerState: Number(el.dataset.id), seed: Math.floor(Math.random() * 1e6) });
     save();
     begin();
   } else if (act === 'continue') {
     try { game = deserialize(localStorage.getItem(SAVE_KEY)); begin(); } catch { toast('Не удалось загрузить сохранение'); }
+  } else if (act === 'tab') {
+    tab = tab === el.dataset.tab ? null : el.dataset.tab;
+    refreshPanel();
   } else if (act === 'close') {
-    if (panel === 'econ') { panel = selected >= 0 ? null : null; refreshSheet(); } else select(-1);
-  } else if (act === 'nav-prov') {
-    if (selected < 0) toast('Коснись провинции на карте');
-    else { panel = panel === 'prov' ? null : 'prov'; refreshSheet(); }
-  } else if (act === 'nav-econ') {
-    panel = panel === 'econ' ? null : 'econ';
-    refreshSheet();
-  } else if (act === 'build' && selected >= 0) {
-    const err = startBuild(game, game.provs[selected], el.dataset.type);
+    tab = null;
+    refreshPanel();
+  } else if (act === 'card-close') {
+    select(-1);
+  } else if (act === 'pick-city') {
+    select(Number(el.dataset.id), true);
+  } else if (act === 'build' && prov) {
+    const err = startBuild(game, prov, el.dataset.type);
     if (err) toast(err);
     refreshAll();
-  } else if (act === 'upgrade' && selected >= 0) {
-    const err = startUpgrade(game, game.provs[selected], Number(el.dataset.i));
+  } else if (act === 'upgrade' && prov) {
+    const err = startUpgrade(game, prov, Number(el.dataset.i));
     if (err) toast(err);
     refreshAll();
-  } else if (act === 'demolish' && selected >= 0) {
+  } else if (act === 'demolish' && prov) {
     if (confirm('Снести здание? Вернётся 30% стоимости.')) {
-      demolish(game, game.provs[selected], Number(el.dataset.i));
+      demolish(game, prov, Number(el.dataset.i));
       refreshAll();
     }
   } else if (act === 'menu') {
     $('menu-ver').textContent = 'Версия ' + VERSION;
-    setShadowsLabel();
     $('menu').classList.remove('hidden');
   } else if (act === 'menu-close') {
     $('menu').classList.add('hidden');
   } else if (act === 'save') {
     toast(save() ? 'Игра сохранена' : 'Не удалось сохранить');
     $('menu').classList.add('hidden');
-  } else if (act === 'shadows') {
-    if (view) {
-      view.setShadows(!view.shadows);
-      try { localStorage.setItem(SH_KEY, view.shadows ? '1' : '0'); } catch { /* ничего */ }
-      setShadowsLabel();
-    }
   } else if (act === 'new') {
     if (confirm('Начать новую игру? Несохранённый прогресс пропадёт.')) { showStart(); }
   } else if (act === 'fit') {

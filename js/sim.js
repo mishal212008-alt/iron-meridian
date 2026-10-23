@@ -4,23 +4,26 @@ import {
 } from './data.js';
 import { generateWorld } from './world.js';
 
-export const SAVE_KEY = 'iron-meridian-save-v1';
+export const SAVE_KEY = 'iron-meridian-save-v2';
+
+const emptyFlow = () => ({ money: { prod: 0, cons: 0 }, steel: { prod: 0, cons: 0 }, fuel: { prod: 0, cons: 0 }, electronics: { prod: 0, cons: 0 } });
 
 export function newGame({ seed = Date.now() % 1000000, playerState = 0, difficulty = 'normal' } = {}) {
   const world = generateWorld(seed);
   const g = {
-    v: 1, seed, day: 1, difficulty, playerState,
+    v: 2, seed, day: 1, difficulty, playerState,
     states: STATES_DEF.map((s, i) => ({
       id: i, name: s.name, color: s.color, isPlayer: i === playerState,
       capital: world.capitals[i],
       ...START,
       energy: { supply: 0, demand: 0, ratio: 1 },
       rate: { money: 0, steel: 0, fuel: 0, electronics: 0 },
+      flow: emptyFlow(),
     })),
     provs: world.provs,
     events: [],
   };
-  attachWorld(g, world);
+  g.world = world; g.nbrs = world.nbrs;
   // стартовые здания в столицах
   for (const s of g.states) {
     const cap = g.provs[s.capital];
@@ -35,10 +38,6 @@ export function newGame({ seed = Date.now() % 1000000, playerState = 0, difficul
   }
   for (const p of g.provs) p.cityLevel = levelOf(p.pop);
   return g;
-}
-
-function attachWorld(g, world) {
-  g.cols = world.cols; g.rows = world.rows; g.nbrs = world.nbrs;
 }
 
 function addDone(p, type, level) {
@@ -62,6 +61,10 @@ export function jobsOf(p) {
   let j = 0;
   for (const b of p.buildings) if (b.level > 0) j += BUILDINGS[b.type].jobs * b.level;
   return j;
+}
+export function staffing(p) {
+  const jobs = jobsOf(p);
+  return jobs > 0 ? Math.min(1, (p.pop * ECON.workerShare) / jobs) : 1;
 }
 export const stateProvs = (g, sid) => g.provs.filter((p) => p.owner === sid);
 
@@ -152,6 +155,7 @@ export function tick(g) {
 function simulateState(g, s) {
   const provs = stateProvs(g, s.id);
   const before = { money: s.money, steel: s.steel, fuel: s.fuel, electronics: s.electronics };
+  const flow = emptyFlow();
 
   // занятость
   const staff = new Map();
@@ -174,6 +178,8 @@ function simulateState(g, s) {
     }
   }
   s.fuel = Math.max(0, s.fuel - fuelNeed * fuelRatio);
+  flow.fuel.cons += fuelNeed * fuelRatio;
+  for (const p of provs) for (const b of p.buildings) if (b.type === 'power' && b.level > 0) b.eff = staff.get(p.id) * fuelRatio;
 
   // 2) спрос на энергию
   let demand = 0;
@@ -200,15 +206,17 @@ function simulateState(g, s) {
     let rich = 1;
     if (def.needs === 'steel') rich = p.deposits.steel;
     if (def.needs === 'oil') rich = p.deposits.oil;
-    if (def.consumes) for (const [k, v] of Object.entries(def.consumes)) s[k] = Math.max(0, s[k] - v * b.level * eff);
-    if (def.produces) for (const [k, v] of Object.entries(def.produces)) s[k] += v * b.level * eff * rich;
+    b.eff = eff;
+    if (def.consumes) for (const [k, v] of Object.entries(def.consumes)) { s[k] = Math.max(0, s[k] - v * b.level * eff); flow[k].cons += v * b.level * eff; }
+    if (def.produces) for (const [k, v] of Object.entries(def.produces)) { s[k] += v * b.level * eff * rich; flow[k].prod += v * b.level * eff * rich; }
   }
 
   // 5) налоги и рост населения
   for (const p of provs) {
     const jobs = jobsOf(p);
     const employed = Math.min(p.pop * ECON.workerShare, jobs);
-    s.money += p.pop * ECON.taxPerPop * (0.5 + 0.5 * eRatio) + employed * ECON.taxPerJob * eRatio;
+    const tax = p.pop * ECON.taxPerPop * (0.5 + 0.5 * eRatio) + employed * ECON.taxPerJob * eRatio;
+    s.money += tax; flow.money.prod += tax;
 
     const cap = housingCap(p);
     if (p.pop < cap) p.pop += Math.max(1, p.pop * ECON.growth * (0.5 + 0.5 * eRatio) * (1 - p.pop / cap));
@@ -217,6 +225,7 @@ function simulateState(g, s) {
     p.cityLevel = levelOf(p.pop);
   }
 
+  s.flow = flow;
   s.rate = {};
   for (const k of RES) s.rate[k] = s[k] - before[k];
 }
@@ -226,9 +235,9 @@ function simulateState(g, s) {
 function botWeight(s, p, type) {
   const lowE = s.energy.ratio < 0.95;
   switch (type) {
-    case 'power': return lowE && s.fuel > 150 ? 6 : lowE ? 0.3 : 0.2;
-    case 'housing': return p.pop > housingCap(p) * 0.85 ? 4 : 0.5;
-    case 'mine': return s.steel < 400 ? 4 : s.steel > 3000 ? 0 : 0.5;
+    case 'power': return lowE && s.fuel > 60 ? 9 : lowE ? 0.5 : 0.2;
+    case 'housing': return s.energy.ratio < 0.7 ? 0.1 : p.pop > housingCap(p) * 0.85 ? 4 : 0.5;
+    case 'mine': return s.energy.ratio < 0.7 ? 0.3 : s.steel < 400 ? 4 : s.steel > 3000 ? 0 : 0.5;
     case 'refinery': return s.fuel < 300 ? (lowE ? 8 : 4) : s.fuel > 3000 ? 0 : 0.3;
     case 'electronics':
       if (s.electronics > 400) return 0;
@@ -276,8 +285,9 @@ export function serialize(g) {
 }
 export function deserialize(text) {
   const d = JSON.parse(text);
-  if (d.v !== 1) throw new Error('Неизвестная версия сохранения');
+  if (d.v !== 2) throw new Error('Неизвестная версия сохранения');
   const world = generateWorld(d.seed);
-  const g = { ...d, nbrs: world.nbrs, cols: world.cols, rows: world.rows, events: [] };
+  const g = { ...d, world, nbrs: world.nbrs, events: [] };
+  for (const st of g.states) st.flow ||= emptyFlow();
   return g;
 }
