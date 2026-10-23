@@ -6,7 +6,7 @@ import {
 } from './world.js';
 import { SEL_TEX, TEX, makeDetail, paintSelection, paintTerrain } from './terrain.js';
 import { isClosed } from './diplomacy.js';
-import { BUILDINGS, DEPOSITS, DEPOSIT_KINDS } from './data.js';
+import { BUILDINGS, DEPOSITS, DEPOSIT_KINDS, THEME } from './data.js';
 
 const { SZ, HALF } = WORLD;
 const DEG = Math.PI / 180;
@@ -21,9 +21,15 @@ const HEX = (s) => parseInt(s.slice(1), 16);
 const geoCache = {};
 const geo = (k, f) => (geoCache[k] ||= f());
 const matCache = {};
-const mat = (hex, extra = {}) => (matCache[hex + JSON.stringify(extra)] ||= new THREE.MeshStandardMaterial({
-  color: hex, flatShading: true, roughness: 0.85, metalness: 0.05, ...extra,
-}));
+let DIM = false; // простаивающие здания рисуются темнее
+const dimHex = (h) => ((((h >> 16) & 255) * 0.5) << 16) | ((((h >> 8) & 255) * 0.5) << 8) | ((h & 255) * 0.5);
+const mat = (hex, extra = {}) => {
+  const hx = DIM && typeof hex === 'number' ? dimHex(hex) : hex;
+  return (matCache[hx + JSON.stringify(extra)] ||= new THREE.MeshStandardMaterial({
+    color: hx, flatShading: true, roughness: 0.85, metalness: 0.05, ...extra,
+  }));
+};
+const isIdle = (b) => b.type !== 'housing' && b.level > 0 && b.buildLeft === 0 && (b.eff ?? 1) < 0.08;
 
 function mesh(g, m, x, y, z) { const o = new THREE.Mesh(g, m); o.position.set(x, y, z); return o; }
 function box(w, h, d, color, x, y, z) {
@@ -353,7 +359,7 @@ export class MapView {
     this.w = opts.width || 390;
     this.h = opts.height || 560;
     this.pointers = new Map();
-    this.cam = { tx: 0, tz: 0, yaw: 0, pitch: 0.95, dist: 60 };
+    this.cam = { tx: 0, tz: 0, yaw: 0, pitch: 1.26, dist: 60 };
     this.fitDist = 100;
     this.raycaster = new THREE.Raycaster();
     this.plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.8);
@@ -362,14 +368,18 @@ export class MapView {
     this.pinMode = null;
     this.t0 = 0;
     this.dprCap = 2;
+    this.floats = [];
+    this.bars = [];
+    this.pulseT = 0;
     this.layers = { deposits: false, borders: true, energy: false, unemp: false };
     this.labelExtra = null;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0e345c);
-    this.camera = new THREE.PerspectiveCamera(40, this.w / this.h, 1, 600);
-    this.scene.add(new THREE.HemisphereLight(0xe3efff, 0x4d5a3c, 1.9));
-    const sun = new THREE.DirectionalLight(0xfff1d6, 1.8);
+    this.scene.background = new THREE.Color(THEME.sea);
+    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 1200); // почти строго сверху
+    this.fovTan = Math.tan((20 * Math.PI) / 180);
+    this.scene.add(new THREE.HemisphereLight(THEME.hemiSky, THEME.hemiGround, THEME.hemiPower));
+    const sun = new THREE.DirectionalLight(THEME.sun, THEME.sunPower);
     sun.position.set(-30, 50, -20);
     this.scene.add(sun);
 
@@ -539,10 +549,12 @@ export class MapView {
       if (im.instanceColor) im.instanceColor.needsUpdate = true;
       im.frustumCulled = false;
       this.root.add(im);
+      return im;
     };
-    mk(new THREE.ConeGeometry(0.3, 1, 6), pines, 0, [0x2c5f37, 0x336b3d, 0x264f30, 0x3d7544], 1, 1.25, 0.62);
-    mk(new THREE.IcosahedronGeometry(0.34, 0), oaks, 100, [0x4a8a45, 0x3f7d3d, 0x5b9a4b, 0x6aa356], 1, 1.1, 0.38);
-    mk(new THREE.IcosahedronGeometry(0.2, 0), bushes, 300, [0x5d8f48, 0x6d9a4f, 0x7a8f4a, 0x4f8040], 1, 0.7, 0.1);
+    this.treeMeshes = [];
+    this.treeMeshes.push(mk(new THREE.ConeGeometry(0.34, 1, 10), pines, 0, [0x2e7d46, 0x35894b, 0x28703f, 0x3e9150], 1, 1.1, 0.55));
+    this.fancyTrees = [mk(new THREE.IcosahedronGeometry(0.36, 1), oaks, 100, [0x57a24c, 0x4a9444, 0x66ae55, 0x73b85c], 1, 1.0, 0.36)];
+    this.fancyTrees.push(mk(new THREE.IcosahedronGeometry(0.2, 0), bushes, 300, [0x5d8f48, 0x6d9a4f, 0x7a8f4a, 0x4f8040], 1, 0.7, 0.1));
     mk(new THREE.ConeGeometry(0.42, 1, 5), peaks, 200, [0x8b8479, 0x9b958a, 0x7a746c, 0xa7a8ac, 0xe8eaee], 1, 1.5, 0.4);
     this.treeCount = pines.length + oaks.length;
   }
@@ -906,7 +918,7 @@ export class MapView {
   }
 
   signature(p) {
-    return p.buildings.map((b) => `${b.type}${b.level}${b.buildLeft > 0 ? 'c' : ''}@${b.x},${b.z}`).join(',') + '|' + DEPOSIT_KINDS.map((k) => (p.deposits[k] ? k[0] : '')).join('') + '|' + p.owner;
+    return p.buildings.map((b) => `${b.type}${b.level}${b.buildLeft > 0 ? 'c' : ''}${isIdle(b) ? 'i' : ''}@${b.x},${b.z}`).join(',') + '|' + DEPOSIT_KINDS.map((k) => (p.deposits[k] ? k[0] : '')).join('') + '|' + p.owner;
   }
 
   rebuildCity(p) {
@@ -939,7 +951,9 @@ export class MapView {
     p.buildings.forEach((b) => {
       const y = surfaceY(this.wd, b.x, b.z);
       const m = new THREE.Group();
+      DIM = isIdle(b);
       if (b.level > 0) m.add(MODELS[b.type](b.level));
+      DIM = false;
       m.position.set(b.x, y, b.z); m.rotation.y = -Math.atan2(b.z - p.z, b.x - p.x) + Math.PI / 2; m.scale.setScalar(BSCALE);
       sg.add(m);
       m.updateMatrixWorld(true);
@@ -1046,6 +1060,10 @@ export class MapView {
   setQuality(q) {
     this.quality = q;
     this.dprCap = q === 'low' ? 1 : q === 'medium' ? 1.5 : 2;
+    // на слабых телефонах: без мелких деревьев, машин и дыма
+    for (const m of this.fancyTrees || []) m.visible = q !== 'low';
+    if (this.carMesh) this.carMesh.visible = q !== 'low';
+    if (this.puffMesh) this.puffMesh.visible = q !== 'low';
     this.resize();
   }
 
@@ -1063,6 +1081,7 @@ export class MapView {
   buildLabels() {
     if (!this.labelsEl) { this.labels = null; this.pins = null; return; }
     this.labelsEl.innerHTML = '';
+    this.floats = []; this.bars = [];
     this.labels = this.g.provs.map(() => {
       const el = document.createElement('div');
       el.className = 'clabel';
@@ -1089,24 +1108,39 @@ export class MapView {
     const { provs, states, playerState } = this.g;
     const close = this.cam.dist < this.fitDist * 0.55;
     const v = this.tmpV;
+    const cand = [];
     for (const p of provs) {
       const L = this.labels[p.id];
       const show = p.owner === playerState || p.capital || this.cam.dist < this.fitDist * 0.75 || p.id === this.sel;
-      let vis = false;
-      if (show) {
-        v.set(p.x, surfaceY(this.wd, p.x, p.z) + 1.9, p.z).project(this.camera);
-        if (v.z < 1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05) {
-          vis = true;
-          L.el.style.transform = `translate(-50%,-100%) translate(${((v.x + 1) / 2) * this.w}px,${((1 - v.y) / 2) * this.h}px)`;
-        }
-      }
-      if (vis !== L.vis) { L.vis = vis; L.el.style.display = vis ? '' : 'none'; }
-      if (!vis) continue;
+      L.want = false;
+      if (!show) continue;
+      v.set(p.x, surfaceY(this.wd, p.x, p.z) + 1.9, p.z).project(this.camera);
+      if (v.z >= 1 || Math.abs(v.x) > 1.05 || Math.abs(v.y) > 1.05) continue;
       const extra = this.labelExtra && p.owner === playerState ? this.labelExtra(p) : '';
       const text = `${p.capital ? '★ ' : ''}${p.name}${close ? ' · ' + Math.round(p.pop / 100) / 10 + 'k' : ''}${extra}`;
-      const cls = 'clabel' + (p.id === this.sel ? ' sel' : '') + (p.owner === playerState ? ' mine' : '');
-      if (L.text !== text + cls) {
-        L.text = text + cls; L.el.textContent = text; L.el.className = cls; L.el.style.setProperty('--c', states[p.owner].color);
+      const pr = (p.id === this.sel ? 1e6 : 0) + (p.owner === playerState ? 1e4 : 0) + (p.capital ? 5e3 : 0) + p.pop;
+      cand.push({ p, L, text, pr, sx: ((v.x + 1) / 2) * this.w, sy: ((1 - v.y) / 2) * this.h });
+    }
+    // плашки не накладываются друг на друга: важные занимают место первыми
+    cand.sort((a, b) => b.pr - a.pr);
+    const taken = [];
+    for (const c of cand) {
+      const w = c.text.length * 6.9 + 18, h = 22;
+      const r = [c.sx - w / 2, c.sy - h, c.sx + w / 2, c.sy];
+      if (c.pr < 1e6 && taken.some((t) => r[0] < t[2] && r[2] > t[0] && r[1] < t[3] && r[3] > t[1])) continue;
+      taken.push(r);
+      c.L.want = true; c.L.pos = `translate(-50%,-100%) translate(${Math.round(c.sx)}px,${Math.round(c.sy)}px)`; c.L.txt = c.text;
+      c.L.p = c.p;
+    }
+    for (const p of provs) {
+      const L = this.labels[p.id];
+      const vis = L.want;
+      if (vis !== L.vis) { L.vis = vis; L.el.style.display = vis ? '' : 'none'; }
+      if (!vis) continue;
+      L.el.style.transform = L.pos;
+      const cls = 'clabel pill' + (p.id === this.sel ? ' sel' : '') + (p.owner === playerState ? ' mine' : '');
+      if (L.text !== L.txt + cls) {
+        L.text = L.txt + cls; L.el.textContent = L.txt; L.el.className = cls; L.el.style.setProperty('--c', states[p.owner].color);
       }
     }
     for (const pin of this.pins || []) {
@@ -1127,13 +1161,68 @@ export class MapView {
     }
   }
 
+  // всплывающая надпись над точкой карты («+12💰»)
+  floatText(x, z, text, cls = '') {
+    if (!this.labelsEl || this.headless) return;
+    if (this.floats.length > 24) return;
+    const el = document.createElement('div');
+    el.className = 'ftext ' + cls;
+    el.textContent = text;
+    this.labelsEl.appendChild(el);
+    this.floats.push({ el, x, z, t0: performance.now() });
+    this.dirty = true;
+  }
+
+  updateFloats() {
+    const now = performance.now(), v = this.tmpV;
+    this.floats = this.floats.filter((f) => {
+      const k = (now - f.t0) / 1500;
+      if (k >= 1) { f.el.remove(); return false; }
+      v.set(f.x, surfaceY(this.wd, f.x, f.z) + 1.6, f.z).project(this.camera);
+      f.el.style.transform = `translate(-50%,-100%) translate(${Math.round(((v.x + 1) / 2) * this.w)}px,${Math.round(((1 - v.y) / 2) * this.h - k * 34)}px)`;
+      f.el.style.opacity = String(k < 0.7 ? 1 : 1 - (k - 0.7) / 0.3);
+      return true;
+    });
+  }
+
+  // полоски прогресса стройки над зданиями
+  updateBars() {
+    const { provs, playerState } = this.g;
+    const v = this.tmpV;
+    const list = [];
+    if (this.cam.dist < this.fitDist * 0.6) {
+      for (const p of provs) {
+        if (p.owner !== playerState) continue;
+        for (const b of p.buildings) if (b.buildLeft > 0) list.push(b);
+      }
+    }
+    while (this.bars.length < list.length) {
+      const el = document.createElement('div');
+      el.className = 'cbar'; el.innerHTML = '<i></i><span></span>';
+      this.labelsEl.appendChild(el);
+      this.bars.push(el);
+    }
+    this.bars.forEach((el, i) => {
+      const b = list[i];
+      if (!b) { if (el.style.display !== 'none') el.style.display = 'none'; return; }
+      v.set(b.x, surfaceY(this.wd, b.x, b.z) + 2.2, b.z).project(this.camera);
+      if (v.z >= 1 || Math.abs(v.x) > 1.05 || Math.abs(v.y) > 1.05) { el.style.display = 'none'; return; }
+      const total = Math.max(1, Math.round(BUILDINGS[b.type].days * (1 + 0.5 * b.level)));
+      el.style.display = '';
+      el.style.transform = `translate(-50%,-100%) translate(${Math.round(((v.x + 1) / 2) * this.w)}px,${Math.round(((1 - v.y) / 2) * this.h)}px)`;
+      el.firstChild.style.width = Math.round((1 - b.buildLeft / total) * 100) + '%';
+      el.lastChild.textContent = '🚧 ' + b.buildLeft + ' дн.';
+    });
+  }
+
   // ---- камера ----
   updateCamera() {
     const { tx, tz, yaw, pitch, dist } = this.cam;
-    const cp = Math.cos(pitch);
-    this.camera.position.set(tx + Math.sin(yaw) * cp * dist, Math.sin(pitch) * dist + 1, tz + Math.cos(yaw) * cp * dist);
+    const cp = Math.cos(pitch), D = 300; // камера далеко: у ортографической проекции расстояние не влияет на масштаб
+    this.camera.position.set(tx + Math.sin(yaw) * cp * D, Math.sin(pitch) * D + 1, tz + Math.cos(yaw) * cp * D);
     this.camera.lookAt(tx, 1, tz);
-    this.camera.aspect = this.w / this.h;
+    const hh = dist * this.fovTan, hw = hh * (this.w / this.h);
+    this.camera.left = -hw; this.camera.right = hw; this.camera.top = hh; this.camera.bottom = -hh;
     this.camera.updateProjectionMatrix();
     this.camera.updateMatrixWorld();
   }
@@ -1142,21 +1231,18 @@ export class MapView {
     const lim = HALF * 0.9;
     this.cam.tx = Math.max(-lim, Math.min(lim, this.cam.tx));
     this.cam.tz = Math.max(-lim, Math.min(lim, this.cam.tz));
-    this.cam.dist = Math.min(this.fitDist * 1.15, Math.max(4, this.cam.dist));
+    this.cam.dist = Math.min(this.fitDist * 1.15, Math.max(5, this.cam.dist));
   }
 
   fit() {
     const aspect = this.w / this.h;
-    const fov = this.camera.fov * DEG;
-    const fovH = 2 * Math.atan(Math.tan(fov / 2) * aspect);
-    const fmin = Math.min(fov, fovH);
-    this.fitDist = (this.radius / Math.sin(fmin / 2)) * 0.74;
-    this.cam.tx = 0; this.cam.tz = 0; this.cam.yaw = 0; this.cam.pitch = 0.95;
+    this.fitDist = (this.radius * 1.12) / (this.fovTan * Math.min(1, aspect));
+    this.cam.tx = 0; this.cam.tz = 0; this.cam.yaw = 0; this.cam.pitch = 1.26;
     this.cam.dist = this.fitDist;
     this.dirty = true;
   }
 
-  focus(p, zoom = 0.3) { this.focusAt(p.x, p.z, Math.max(14, this.fitDist * zoom)); }
+  focus(p, zoom = 0.2) { this.focusAt(p.x, p.z, Math.max(14, this.fitDist * zoom)); }
 
   focusAt(x, z, dist) {
     this.cam.dist = Math.min(this.cam.dist, dist);
@@ -1235,7 +1321,7 @@ export class MapView {
         if (this.tap && Math.hypot(l.x - this.tap.x, l.y - this.tap.y) > 8) this.tap.moved = true;
         if (prev.btn === 2) { // правая кнопка: вращение
           this.cam.yaw -= (l.x - prev.x) * 0.008;
-          this.cam.pitch = Math.min(1.3, Math.max(0.5, this.cam.pitch + (l.y - prev.y) * 0.005));
+          this.cam.pitch = Math.min(1.45, Math.max(0.9, this.cam.pitch + (l.y - prev.y) * 0.005));
         } else if (this.tap && this.tap.moved) {
           const a = this.groundAt(prev.x, prev.y);
           const b = this.groundAt(l.x, l.y);
@@ -1296,7 +1382,15 @@ export class MapView {
     this.updateCamera();
     if (this.layers.unemp && this.heat && this.heat.visible && !this.heatTick) { this.heatTick = true; this.updateHeat(); setTimeout(() => { this.heatTick = false; }, 800); }
     this.updateLabels();
+    if (this.labelsEl && !this.headless) { this.updateBars(); this.updateFloats(); }
+    if (this.ring && this.ring.visible && this.quality !== 'low') {
+      const k = 1 + 0.07 * Math.sin(now * 5);
+      this.ring.scale.setScalar(2.9 * k);
+      this.ring.material.opacity = 0.65 + 0.3 * Math.sin(now * 5 + 1);
+      if (!this.headless && now - this.pulseT > 0.09) { this.pulseT = now; this.pulse = true; }
+    }
     if (this.renderer) this.renderer.render(this.scene, this.camera);
-    this.dirty = this.animating;
+    this.dirty = this.animating || this.floats.length > 0 || !!this.pulse;
+    this.pulse = false;
   }
 }

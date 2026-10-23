@@ -1,5 +1,6 @@
 // Рисование земли в текстуру: вода, берег, трава, леса, горы, снег, поля, реки, дороги,
 // границы государств. Работает без DOM: результат — массив RGBA, из него делается текстура.
+import { TERRAIN_COLORS } from './data.js';
 import { CELL, WORLD, gridSample, mulberry32, smoothstep, territoryAt } from './world.js';
 
 const { N, HALF, SZ } = WORLD;
@@ -8,13 +9,7 @@ export const TEX = 1536;
 const hexRgb = (s) => [parseInt(s.slice(1, 3), 16), parseInt(s.slice(3, 5), 16), parseInt(s.slice(5, 7), 16)];
 const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 
-const C = {
-  deep: [14, 52, 92], mid: [24, 94, 138], shallow: [64, 156, 170], foam: [226, 240, 236],
-  sand: [217, 201, 153],
-  low: [118, 163, 86], mid2: [94, 144, 72], hill: [128, 140, 84], rock: [138, 130, 118], snow: [238, 241, 245],
-  forest: [56, 100, 58], river: [66, 140, 190], urban: [156, 146, 128],
-  road: [182, 150, 100], roadEdge: [120, 96, 64],
-};
+const C = TERRAIN_COLORS;
 const FIELDS = [[205, 190, 98], [160, 178, 84], [128, 156, 74], [184, 146, 92], [212, 200, 120]];
 
 function hash2(a, b, s) {
@@ -60,7 +55,7 @@ export function makePainter(world, stateColors, tex = TEX) {
       const o = (r * tex + c) * 4;
       let rgb;
       const n1 = nz(x * 1.1, z * 1.1), n2 = nz(x * 0.23 + 9, z * 0.23);
-      const vari = 0.93 + 0.1 * n1 + 0.08 * n2;
+      const vari = 0.97 + 0.045 * n1 + 0.035 * n2;
 
       if (hv <= 0) {
         const d = -hv;
@@ -84,6 +79,8 @@ export function makePainter(world, stateColors, tex = TEX) {
         const patch = nz(x * 0.12 + 40, z * 0.12 - 7);
         rgb = mix(rgb, [150, 150, 88], smoothstep(0.55, 0.8, patch) * 0.45 * (1 - smoothstep(0.1, 0.2, hv)));
         rgb = mix(rgb, [86, 138, 78], smoothstep(0.55, 0.2, patch) * 0.25);
+        const glade = nz(x * 0.31 - 20, z * 0.31 + 11);
+        rgb = mix(rgb, [158, 200, 100], smoothstep(0.62, 0.78, glade) * 0.55 * (1 - smoothstep(0.1, 0.18, hv)));
         const e = 0.25;
         const slope = Math.hypot(gridSample(h, x + e, z) - gridSample(h, x - e, z), gridSample(h, x, z + e) - gridSample(h, x, z - e)) / (2 * e);
         rgb = mix(rgb, C.rock, smoothstep(0.1, 0.28, slope + (n2 - 0.5) * 0.05) * 0.8);
@@ -116,10 +113,12 @@ export function makePainter(world, stateColors, tex = TEX) {
 
         // освещение рельефа
         const sh = gridSample(shade, x, z);
-        rgb = [rgb[0] * sh, rgb[1] * sh, rgb[2] * sh];
+        const sh2 = 0.9 + (sh - 0.9) * 0.45; // мягкий рельеф
+        rgb = [rgb[0] * sh2, rgb[1] * sh2, rgb[2] * sh2];
 
         // река
-        if (rv > 0.35) rgb = mix(rgb, C.river, Math.min(1, (rv - 0.35) * 3.2));
+        rgb = mix(rgb, C.bank, smoothstep(0.08, 0.34, rv) * 0.9);
+        rgb = mix(rgb, C.river, smoothstep(0.3, 0.62, rv));
 
         // оттенок и граница государства (рядом с границей считаем точно)
         let st = owner[pi], sd = gridSample(sm, x, z), pd = gridSample(pm, x, z);
@@ -180,6 +179,38 @@ export function makePainter(world, stateColors, tex = TEX) {
       for (let k = 0; k < 7; k++) {
         const a = rng() * 6.28, r = rng() * R * 0.8;
         stamp(d.oil[0] + Math.cos(a) * r, d.oil[1] + Math.sin(a) * r, (0.25 + rng() * 0.4) * (tex / SZ), [26, 26, 32], 0.88);
+      }
+    }
+  }
+  // кварталы: толстая обводка цвета государства вокруг каждого города
+  const rr = (hx, hz, rad, t) => { // точка на скруглённом квадрате по параметру t∈[0,1)
+    const L = 8 * (hx - rad) + 2 * Math.PI * rad;
+    let d = t * L; const sx = hx - rad, sz = hz - rad, q = (Math.PI / 2) * rad;
+    const seg = [[2 * sx, 0], [q, 1], [2 * sz, 2], [q, 3], [2 * sx, 4], [q, 5], [2 * sz, 6], [q, 7]];
+    for (const [len, k] of seg) {
+      if (d > len) { d -= len; continue; }
+      const f = d / len;
+      switch (k) {
+        case 0: return [-sx + 2 * sx * f, -hz];
+        case 1: { const a = -Math.PI / 2 + f * Math.PI / 2; return [sx + Math.cos(a) * rad, -sz + Math.sin(a) * rad]; }
+        case 2: return [hx, -sz + 2 * sz * f];
+        case 3: { const a = f * Math.PI / 2; return [sx + Math.cos(a) * rad, sz + Math.sin(a) * rad]; }
+        case 4: return [sx - 2 * sx * f, hz];
+        case 5: { const a = Math.PI / 2 + f * Math.PI / 2; return [-sx + Math.cos(a) * rad, sz + Math.sin(a) * rad]; }
+        case 6: return [-hx, sz - 2 * sz * f];
+        default: { const a = Math.PI + f * Math.PI / 2; return [-sx + Math.cos(a) * rad, -sz + Math.sin(a) * rad]; }
+      }
+    }
+    return [hx, -hz];
+  };
+  for (const p of provs) {
+    const hx = 2.35, hz = 2.0, rad = 0.8, n = 420;
+    const c = col[owner[p.id]] || [255, 255, 255];
+    for (const pass of [0, 1]) {
+      for (let i = 0; i < n; i++) {
+        const [dx, dz] = rr(hx, hz, rad, i / n);
+        if (pass === 0) stamp(p.x + dx, p.z + dz, 3.1, [18, 20, 14], 0.8);
+        else stamp(p.x + dx, p.z + dz, 2.1, c, 0.95);
       }
     }
   }

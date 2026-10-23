@@ -1,6 +1,6 @@
 // Данные игры «Железный Меридиан». Всё, что можно настраивать, лежит здесь.
 
-export const VERSION = '0.6.0 (дипломатия, границы и КПП, золото и редкие металлы)';
+export const VERSION = '0.7.0 (экономика, новый интерфейс, тактическая карта)';
 
 
 // Вымышленные названия провинций
@@ -72,7 +72,7 @@ export const TERRAIN = {
 };
 
 // Стартовые ресурсы любого государства
-export const START = { money: 700, steel: 110, fuel: 90, electronics: 0, gold: 15, rare: 10, ore: 40, food: 400 };
+export const START = { money: 700, steel: 110, fuel: 90, electronics: 0, gold: 15, rare: 10, ore: 40, food: 800 };
 
 // Здания.
 // cost — цена 1 уровня (каждый следующий дороже в LEVEL_COST_MULT раз)
@@ -181,3 +181,17 @@ export const ECON = {
 };
 
 export const SPEEDS = [0, 0.2, 0.5, 1.2]; // игровых дней в секунду (1 день = 5 секунд на обычной скорости)
+
+// ---- цвета и параметры стиля 3D-карты (меняйте здесь) ----
+export const TERRAIN_COLORS = {
+  deep: [16, 62, 112], mid: [28, 108, 164], shallow: [78, 176, 200], foam: [232, 244, 240],
+  sand: [226, 210, 158],
+  low: [128, 172, 76], mid2: [112, 160, 66], hill: [148, 160, 84], rock: [146, 138, 124], snow: [240, 243, 247],
+  forest: [58, 114, 58], river: [30, 118, 220], bank: [176, 218, 238], urban: [170, 162, 140],
+  road: [182, 150, 100], roadEdge: [120, 96, 64],
+};
+export const THEME = {
+  sea: 0x0e345c, hemiSky: 0xe3efff, hemiGround: 0x4d5a3c, hemiPower: 1.9, sun: 0xfff1d6, sunPower: 1.8,
+  quarterWidth: 2.1, quarterHalf: [2.35, 2.0], quarterRadius: 0.8, tilt: 1.26,
+};
+export const QUALITY = { low: { dpr: 1, trees: false, cars: false }, medium: { dpr: 1.5, trees: true, cars: true }, high: { dpr: 2, trees: true, cars: true } };

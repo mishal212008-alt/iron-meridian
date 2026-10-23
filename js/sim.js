@@ -34,6 +34,8 @@ export function newGame({ seed = Date.now() % 1000000, playerState = 0, difficul
     addDone(cap, 'farm', 1);
     addDone(cap, 'farm', 1);
     cap.cityLevel = levelOf(cap.pop);
+    // ещё две фермы в самых людных городах: страна не должна голодать в первые дни
+    for (const q of g.provs.filter((p) => p.owner === s.id && p.id !== cap.id).sort((a, b) => b.pop - a.pop).slice(0, 2)) addDone(q, 'farm', 1);
     for (const kind of ['steel', 'oil']) {
       const spot = g.provs.filter((p) => p.owner === s.id && p.deposits[kind] > 0 && p.buildings.length < slots(p))[0];
       if (spot) addDone(spot, DEPOSITS[kind].building, 1);
@@ -42,6 +44,7 @@ export function newGame({ seed = Date.now() % 1000000, playerState = 0, difficul
   assignSpots(g);
   for (const p of g.provs) p.cityLevel = levelOf(p.pop);
   for (const s of g.states) updateCaps(g, s);
+  initQuests(g);
   return g;
 }
 
@@ -523,13 +526,22 @@ function botMarket(g, s) {
 
 // ---- обучение: короткие цели с наградой ----
 export const QUESTS = [
-  { id: 'power', text: 'Построй электростанцию (ТЭС или ГЭС)', reward: 150, done: (g, s) => hasBuilt(g, s, ['power', 'hydro']) },
-  { id: 'mine', text: 'Построй рудник у месторождения руды', reward: 150, done: (g, s) => hasBuilt(g, s, ['mine']) },
-  { id: 'steel', text: 'Построй сталелитейный завод: руда → сталь', reward: 200, done: (g, s) => hasBuilt(g, s, ['steelworks']) },
-  { id: 'farm', text: 'Построй вторую ферму, чтобы город не голодал', reward: 150, done: (g, s) => provsOf(g, s).reduce((a, p) => a + p.buildings.filter((b) => b.type === 'farm' && b.level > 0).length, 0) >= 2 },
+  { id: 'power', text: 'Построй ещё одну электростанцию (ТЭС или ГЭС)', reward: 150, types: ['power', 'hydro'] },
+  { id: 'mine', text: 'Построй рудник у месторождения руды', reward: 150, types: ['mine'] },
+  { id: 'steel', text: 'Построй сталелитейный завод: руда → сталь', reward: 200, types: ['steelworks'] },
+  { id: 'farm', text: 'Построй ещё одну ферму, чтобы город не голодал', reward: 150, types: ['farm'] },
   { id: 'sell', text: 'Продай излишки на рынке (вкладка «Бюджет»)', reward: 100, done: (g, s) => s.stats.sold > 0 },
   { id: 'trade', text: 'Заключи торговую сделку или построй порт', reward: 250, done: (g, s) => hasBuilt(g, s, ['port']) || g.dip.deals.some((d) => d.seller === s.id || d.buyer === s.id) },
 ];
+const countBuilt = (g, s, types) => provsOf(g, s).reduce((a, p) => a + p.buildings.filter((b) => b.level > 0 && types.includes(b.type)).length, 0);
+const questDone = (g, s, q) => (q.types ? countBuilt(g, s, q.types) > ((g.quests.base && g.quests.base[q.id]) || 0) : q.done(g, s));
+// сколько таких зданий было на старте: цели считаются от этого
+export function initQuests(g) {
+  const s = g.states[g.playerState];
+  g.quests.base = {};
+  if (!s) return;
+  for (const q of QUESTS) if (q.types) g.quests.base[q.id] = countBuilt(g, s, q.types);
+}
 const provsOf = (g, s) => g.provs.filter((p) => p.owner === s.id);
 const hasBuilt = (g, s, types) => provsOf(g, s).some((p) => p.buildings.some((b) => b.level > 0 && types.includes(b.type)));
 export function currentQuest(g) {
@@ -540,7 +552,7 @@ function checkQuests(g) {
   if (!s) return;
   for (const q of QUESTS) {
     if (g.quests.done.includes(q.id)) continue;
-    if (q.done(g, s)) {
+    if (questDone(g, s, q)) {
       g.quests.done.push(q.id);
       s.money += q.reward;
       note(g, `🎯 Цель выполнена: ${q.text}. Награда ${q.reward}💰`, -1, 'good');

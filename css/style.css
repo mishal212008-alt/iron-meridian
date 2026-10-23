@@ -321,3 +321,11 @@ i.pos { color: var(--pos); } i.neg { color: var(--neg); } i.warn { color: var(--
 .dpin { border-radius: 50%; }
 .clabel.pill { border-radius: 12px; }
 @media (max-width: 899px) { #dock kbd { display: none; } #dock .nl { font-size: 10px; letter-spacing: 0; } #dock .ni { font-size: 21px; } }
+
+/* подписи и эффекты на карте */
+.clabel { font-size: 12px; padding: 2px 9px; border-width: 2px; border-radius: 12px; letter-spacing: .01em; }
+.clabel.sel { color: #1d1200; text-shadow: none; background: var(--c); }
+.ftext { position: absolute; left: 0; top: 0; font-weight: 800; font-size: 14px; color: #ffe08a; text-shadow: 0 1px 3px #000, 0 0 6px rgba(0,0,0,.7); pointer-events: none; will-change: transform, opacity; }
+.cbar { position: absolute; left: 0; top: 0; width: 76px; height: 16px; border-radius: 9px; background: rgba(20,22,15,.88); border: 2px solid var(--accent); overflow: hidden; pointer-events: none; font-size: 10px; font-weight: 700; }
+.cbar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent-d); border-right: 2px solid var(--accent); }
+.cbar span { position: relative; display: block; text-align: center; line-height: 12px; color: #fff; }

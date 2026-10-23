@@ -1,5 +1,5 @@
 // Простой service worker: сеть в приоритете (чтобы обновления игры приходили сразу), кэш как запасной вариант.
-const CACHE = 'iron-meridian-v6';
+const CACHE = 'iron-meridian-v7';
 
 self.addEventListener('install', (e) => { self.skipWaiting(); });
 self.addEventListener('activate', (e) => {

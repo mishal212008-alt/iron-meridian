@@ -268,7 +268,24 @@ function advanceDay() {
   }
   refreshTop();
   panelDirty = true;
+  spawnIncome();
   view.dirty = true;
+}
+
+// «+12💰» над работающими зданиями (только когда камера близко)
+function spawnIncome() {
+  if (!view || view.cam.dist > view.fitDist * 0.45) return;
+  let n = 0;
+  for (const p of game.provs) {
+    if (p.owner !== game.playerState) continue;
+    for (const b of p.buildings) {
+      if (n >= 10) return;
+      if (b.level <= 0 || b.buildLeft > 0 || b.type === 'housing') continue;
+      const f = forecast(b.type, b.level, p);
+      const v = Math.round(f.income * Math.min(1, b.eff ?? 1));
+      if (v >= 2 && (b.eff ?? 1) > 0.3) { view.floatText(b.x, b.z, `+${v}💰`); n++; }
+    }
+  }
 }
 
 function loop(t) {
@@ -486,7 +503,7 @@ document.addEventListener('click', (e) => {
   } else if (act === 'zoom-in') { if (view) view.zoomBy(0.7);
   } else if (act === 'zoom-out') { if (view) view.zoomBy(1.4);
   } else if (act === 'home') {
-    if (view) view.focus(game.provs[game.states[game.playerState].capital], 0.3);
+    if (view) view.focus(game.provs[game.states[game.playerState].capital], 0.2);
   } else if (act === 'layers') {
     const lb = $('layerbox');
     lb.innerHTML = layerBoxHtml();

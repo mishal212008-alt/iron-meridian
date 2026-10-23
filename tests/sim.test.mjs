@@ -191,5 +191,32 @@ for (const seed of [1, 7, 42, 123, 999, 31337]) {
 }
 function require_up(g, p) { return upgradeErr(g, p, 0) || ''; }
 
+// обучение: цель не выполняется сама на старте и засчитывается после стройки
+{
+  const g = newGame({ seed: 61, playerState: 1 });
+  const s = g.states[1];
+  tick(g); tick(g);
+  ok(!g.quests.done.includes('power') && !g.quests.done.includes('farm'), 'цели выполнены без действий игрока');
+  s.money = 1e5; s.steel = 1e4;
+  const city = g.provs.find((p) => p.owner === 1 && p.buildings.length < 4 && !p.capital) || g.provs[s.capital];
+  ok(startBuild(g, city, 'power') === null, 'электростанция не построилась');
+  for (let i = 0; i < 40; i++) tick(g);
+  ok(g.quests.done.includes('power'), 'цель про электростанцию не засчитана');
+}
+
+// миграция сохранения v3 → v4
+{
+  const g = newGame({ seed: 51, playerState: 2 });
+  for (let i = 0; i < 30; i++) tick(g);
+  const d = JSON.parse(serialize(g));
+  d.v = 3; delete d.quests; delete d.feed;
+  for (const st of d.states) { for (const k of ['ore', 'food', 'auto', 'budget', 'pend', 'cap', 'mcap', 'marketLeft', 'foodRatio', 'foodNeed', 'famine', 'overflow', 'stats']) delete st[k]; }
+  for (const p of d.provs) delete p.hasRiver;
+  const g3 = deserialize(JSON.stringify(d));
+  for (let i = 0; i < 40; i++) tick(g3);
+  const bad = g3.states.some((st) => ['money', 'steel', 'food', 'ore'].some((k) => !Number.isFinite(st[k]) || st[k] < 0));
+  ok(!bad && g3.v === 4 && g3.states[2].cap >= 2000, 'миграция сохранения v3 сломала экономику');
+}
+
 console.log(fails === 0 ? 'ВСЕ ПРОВЕРКИ ПРОШЛИ' : `ПРОВАЛОВ: ${fails}`);
 process.exit(fails ? 1 : 0);
