@@ -197,7 +197,7 @@ export function resHtml(g) {
   html += '<h3>Чужие месторождения</h3>' + (deps.filter((d) => d.p.owner !== g.playerState).map(row).join('') || '<p class="muted">Нет.</p>');
 
   html += '<h3>Распределение производства</h3>';
-  const prod = mine.map((p) => ({ p, c: cityProduction(p) }));
+  const prod = mine.map((p) => ({ p, c: cityProduction(p, s) }));
   for (const k of RES) {
     const list = prod.map(({ p, c }) => ({ p, v: c[k].prod, u: c[k].cons })).filter((x) => x.v > 0.05 || x.u > 0.05).sort((a, b) => b.v - a.v).slice(0, 6);
     const max = Math.max(1, ...list.map((x) => x.v));

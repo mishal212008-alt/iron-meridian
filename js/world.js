@@ -343,7 +343,10 @@ export function generateWorld(seed) {
   // 9. рельеф вокруг городов, месторождения
   const cellsOf = provs.map(() => []);
   for (let k = 0; k < N * N; k++) if (h[k] > 0.02 && river[k] === 0) cellsOf[pid[k]].push(k);
+  const riverCnt = provs.map(() => 0);
+  for (let k = 0; k < N * N; k++) if (river[k] > 0.3 && h[k] > 0) riverCnt[pid[k]]++;
   for (const p of provs) {
+    p.hasRiver = riverCnt[p.id] > 6;
     const hc = heightAt(world, p.x, p.z);
     for (let a = 0; a < 12 && !p.coastal; a++) {
       const ang = (a / 12) * Math.PI * 2;

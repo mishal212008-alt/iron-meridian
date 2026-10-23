@@ -1,6 +1,6 @@
 // Дипломатия: отношения, договоры, границы, торговые сделки, предложения ботов.
 // Без DOM. Состояние лежит в g.dip и сохраняется вместе с игрой.
-import { BASE_PRICE, DIP, DIP_BASE, RES_ICON, RES_LABEL, STATES_DEF, TRADE_RES } from './data.js';
+import { BASE_PRICE, DIP, DIP_BASE, ECON, RES_ICON, RES_LABEL, STATES_DEF, STOCK_TARGET, TRADE_RES } from './data.js';
 
 const N = STATES_DEF.length;
 const pairKey = (a, b) => `${Math.min(a, b)}-${Math.max(a, b)}`;
@@ -9,7 +9,7 @@ const mat = (v) => Array.from({ length: N }, () => Array(N).fill(v));
 const money = (v) => Math.round(v * 10) / 10;
 
 // какому месторождению соответствует ресурс (чтобы понять, добывает ли страна его сама)
-const RES_DEPOSIT = { steel: 'steel', fuel: 'oil', gold: 'gold', rare: 'rare' };
+const RES_DEPOSIT = { ore: 'steel', steel: 'steel', fuel: 'oil', gold: 'gold', rare: 'rare' };
 
 export const STATUS_LABEL = { neutral: 'Нейтралитет', friend: 'Дружба', ally: 'Союз', war: 'Война' };
 
@@ -43,7 +43,10 @@ export function logDip(g, text, important = false, a = -1, b = -1) {
   g.dip.log.unshift({ day: g.day, text, a, b });
   if (g.dip.log.length > 60) g.dip.log.length = 60;
   const me = g.playerState;
-  if (important || a === me || b === me) g.events.push(`🤝 ${text}`);
+  if (important || a === me || b === me) {
+    g.events.push(`🤝 ${text}`);
+    if (g.feed) { g.feed.unshift({ day: g.day, text: `🤝 ${text}`, pid: -1, kind: 'dip' }); if (g.feed.length > 40) g.feed.length = 40; }
+  }
 }
 
 function addRel(g, a, b, v) {
@@ -61,13 +64,16 @@ export function valueFor(g, s, res) {
   let v = BASE_PRICE[res];
   const stock = s[res];
   const rate = s.rate ? s.rate[res] : 0;
-  if (stock < 60) v *= 1.45; else if (stock < 150) v *= 1.25; else if (stock > 2000) v *= 0.65; else if (stock > 900) v *= 0.82;
-  if (rate < -1 && stock < 400) v *= 1.15;
+  const t = STOCK_TARGET[res];
+  if (stock < t * 0.1) v *= 1.45; else if (stock < t * 0.3) v *= 1.25; else if (stock > t * 3.3) v *= 0.65; else if (stock > t * 1.5) v *= 0.82;
+  if (rate < -0.5 && stock < t * 0.7) v *= 1.15;
   const dk = RES_DEPOSIT[res];
   if (dk && !g.provs.some((p) => p.owner === s.id && p.deposits[dk] > 0)) v *= 1.15; // своей добычи нет
   return v;
 }
 export const fairPrice = (res) => BASE_PRICE[res];
+const marketSell = (res, stock) => BASE_PRICE[res] * Math.max(ECON.sellFloor, Math.min(1, STOCK_TARGET[res] / Math.max(stock, 1)));
+const marketBuy = (res, stock) => ECON.buyMarkup * BASE_PRICE[res] * (1 + Math.max(0, 1 - stock / STOCK_TARGET[res]) * 0.8);
 
 // ---------- оценка предложений ИИ ----------
 export function evaluate(g, from, to, kind, params = {}) {
@@ -106,16 +112,16 @@ export function evaluate(g, from, to, kind, params = {}) {
     const me = g.states[to];
     if (to === buyer) {
       const val = valueFor(g, me, res);
-      const limit = val * (1 + relMod) * (1.08 / Math.max(0.8, T.greed));
-      if (me[res] > 2200) return fail('Склады забиты, им это не нужно');
-      if (me.money < price * amt * 10) return fail('Не хватит денег платить за поставки');
+      const limit = Math.min(val * (1 + relMod) * (1.08 / Math.max(0.8, T.greed)), marketBuy(res, me[res]));
+      if (me[res] > STOCK_TARGET[res] * 3.5) return fail('Склады забиты, им это не нужно');
+      if (me.money < price * amt * 8) return fail('Не хватит денег платить за поставки');
       if (price > limit) return fail(`Дорого: для них ресурс стоит около ${money(limit)}💰`);
       reasons.push(me[res] < 150 ? 'Им остро нужен этот ресурс' : 'Цена приемлема');
       return { accept: true, reasons };
     }
     const val = valueFor(g, me, res);
-    const floor = val * (1 - relMod) * Math.max(0.8, T.greed) * 0.97;
-    const reserve = res === 'steel' || res === 'fuel' ? 120 : 40;
+    const floor = Math.max(val * (1 - relMod) * Math.max(0.8, T.greed) * 0.97, marketSell(res, me[res]));
+    const reserve = res === 'steel' || res === 'fuel' || res === 'food' || res === 'ore' ? 120 : 40;
     if (me[res] - amt * 12 < reserve) return fail('Нет запаса для таких поставок');
     if (price < floor) return fail(`Дёшево: меньше ${money(floor)}💰 они не продадут`);
     reasons.push('Сделка выгодна');
@@ -310,12 +316,13 @@ export function runDeals(g) {
 // ---------- ИИ ----------
 export function summarizeNeeds(g, s) {
   const needs = [], surplus = [];
+  const hasSw = g.provs.some((p) => p.owner === s.id && p.buildings.some((b) => b.type === 'steelworks' && b.level > 0));
   const hasFactory = g.provs.some((p) => p.owner === s.id && p.buildings.some((b) => b.type === 'electronics' && b.level > 0));
   for (const res of TRADE_RES) {
-    const stock = s[res];
-    const lowAt = res === 'fuel' || res === 'steel' ? 160 : res === 'electronics' ? 0 : hasFactory ? 60 : 0;
+    const stock = s[res], t = STOCK_TARGET[res];
+    const lowAt = res === 'fuel' || res === 'steel' ? t * 0.3 : res === 'food' ? s.foodNeed * 10 + 20 : res === 'ore' ? (hasSw ? t * 0.15 : 0) : res === 'electronics' ? 0 : hasFactory ? t * 0.4 : 0;
     if (lowAt && stock < lowAt) needs.push(res);
-    const hiAt = res === 'fuel' ? 400 : res === 'steel' ? 450 : res === 'electronics' ? 120 : 140;
+    const hiAt = t * (res === 'gold' || res === 'rare' || res === 'electronics' ? 0.9 : 0.9);
     if (stock > hiAt) surplus.push(res);
   }
   return { needs, surplus };
@@ -334,14 +341,14 @@ export function botDiplomacy(g, s) {
     const rel = relOf(g, me, o.id), st = statusOf(g, me, o.id);
     if (st === 'war') {
       const days = g.day - d.since[me][o.id];
-      if (days > DIP.warPeaceDays && rel > -62 && Math.random() < 0.25) propose(g, me, o.id, 'peace');
+      if (days > DIP.warPeaceDays && rel > -62 && g.rand() < 0.25) propose(g, me, o.id, 'peace');
       continue;
     }
     if (!d.closed[me][o.id] && rel < -38 && st !== 'ally') setBorder(g, me, o.id, true);
     else if (d.closed[me][o.id] && rel > -8) setBorder(g, me, o.id, false);
-    if (st === 'neutral' && rel < -78 && Math.random() < 0.04 * T.hostile) declareWar(g, me, o.id);
-    if (st === 'neutral' && rel > 26 && Math.random() < 0.3 && !(d.cool[`f${me}-${o.id}`] > g.day)) { d.cool[`f${me}-${o.id}`] = g.day + 20; propose(g, me, o.id, 'friend'); }
-    if (st === 'friend' && rel > 58 && Math.random() < 0.1 && !(d.cool[`a${me}-${o.id}`] > g.day)) { d.cool[`a${me}-${o.id}`] = g.day + 30; propose(g, me, o.id, 'ally'); }
+    if (st === 'neutral' && rel < -78 && g.rand() < 0.04 * T.hostile) declareWar(g, me, o.id);
+    if (st === 'neutral' && rel > 26 && g.rand() < 0.3 && !(d.cool[`f${me}-${o.id}`] > g.day)) { d.cool[`f${me}-${o.id}`] = g.day + 20; propose(g, me, o.id, 'friend'); }
+    if (st === 'friend' && rel > 58 && g.rand() < 0.1 && !(d.cool[`a${me}-${o.id}`] > g.day)) { d.cool[`a${me}-${o.id}`] = g.day + 30; propose(g, me, o.id, 'ally'); }
   }
 
   // торговля
@@ -354,22 +361,22 @@ export function botDiplomacy(g, s) {
     if (g.dip.deals.some((x) => x.res === res && ((x.seller === me && x.buyer === partner.id) || (x.seller === partner.id && x.buyer === me)))) return false;
     d.cool[key] = g.day + 14;
     const base = valueFor(g, s, res);
-    const price = money(asBuyer ? base * (0.95 + Math.random() * 0.12) : base * (1.0 + Math.random() * 0.15));
-    const amt = Math.max(2, Math.round((4 + Math.random() * 8) / 2) * 2);
+    const price = money(asBuyer ? base * (0.95 + g.rand() * 0.12) : base * (1.0 + g.rand() * 0.15));
+    const amt = Math.max(2, Math.round((4 + g.rand() * 8) / 2) * 2) * (res === 'electronics' || res === 'gold' || res === 'rare' ? 1 : 2);
     const params = { seller: asBuyer ? partner.id : me, buyer: asBuyer ? me : partner.id, res, amt, price, days: 45 };
     if (partner.isPlayer) {
       if (asBuyer && partner[res] < amt * 10) return false;            // у игрока нечего продавать
-      if (!asBuyer && partner[res] > 400) return false;               // игроку это не нужно
+      if (!asBuyer && partner[res] > STOCK_TARGET[res] * 0.7) return false; // игроку это не нужно
       if (d.offers.filter((o) => o.to === partner.id).length >= 2) return false;
     }
     return propose(g, me, partner.id, 'deal', params).ok;
   };
   for (const res of needs) {
-    const partners = others.filter((o) => o[res] > (o.isPlayer ? 300 : 260)).sort((a, b) => relOf(g, me, b.id) - relOf(g, me, a.id));
+    const partners = others.filter((o) => o[res] > STOCK_TARGET[res] * (o.isPlayer ? 0.6 : 0.5)).sort((a, b) => relOf(g, me, b.id) - relOf(g, me, a.id));
     for (const p of partners) if (tryDeal(res, p, true)) break;
   }
   for (const res of surplus) {
-    const partners = others.filter((o) => o[res] < 150).sort((a, b) => relOf(g, me, b.id) - relOf(g, me, a.id));
+    const partners = others.filter((o) => o[res] < STOCK_TARGET[res] * 0.3).sort((a, b) => relOf(g, me, b.id) - relOf(g, me, a.id));
     for (const p of partners) if (tryDeal(res, p, false)) break;
   }
 }
@@ -380,8 +387,8 @@ export function hintsFor(g, me, other) {
   const out = [];
   for (const res of TRADE_RES) {
     const vb = valueFor(g, B, res), va = valueFor(g, A, res);
-    if (A[res] > 120 && B[res] < 220 && vb > va) out.push({ res, dir: 'sell', price: money(Math.max(va * 1.05, vb * 0.97)), why: `${B.name} нуждается в ${RES_LABEL[res].toLowerCase()}` });
-    if (B[res] > 220 && A[res] < 220 && va >= vb) out.push({ res, dir: 'buy', price: money(Math.min(va * 0.97, vb * 1.08)), why: `${B.name} располагает запасом` });
+    if (A[res] > STOCK_TARGET[res] * 0.3 && B[res] < STOCK_TARGET[res] * 0.5 && vb > va) out.push({ res, dir: 'sell', price: money(Math.max(va * 1.05, vb * 0.97)), why: `${B.name} нуждается в ${RES_LABEL[res].toLowerCase()}` });
+    if (B[res] > STOCK_TARGET[res] * 0.5 && A[res] < STOCK_TARGET[res] * 0.5 && va >= vb) out.push({ res, dir: 'buy', price: money(Math.min(va * 0.97, vb * 1.08)), why: `${B.name} располагает запасом` });
   }
   return out;
 }

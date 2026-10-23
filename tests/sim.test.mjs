@@ -1,7 +1,8 @@
 // Запуск: node tests/sim.test.mjs
 import { gridSample, territoryAt, provAt } from '../js/world.js';
 import { plotError, findSpot, cityProduction } from '../js/sim.js';
-import { newGame, tick, serialize, deserialize, stateProvs, startBuild, buildError } from '../js/sim.js';
+import { newGame, tick, serialize, deserialize, stateProvs, startBuild, buildError, marketTrade, marketSellPrice, marketBuyPrice, sellSurplus, cancelBuild, forecast } from '../js/sim.js';
+import { upgradeError as upgradeErr } from '../js/sim.js';
 import { STATES_DEF, DEPOSIT_KINDS } from '../js/data.js';
 import {
   answerOffer, breakPact, cancelDeal, createDeal, declareWar, evaluate, gift, isClosed, propose, setBorder, statusOf, tradeBlock,
@@ -97,7 +98,7 @@ for (const seed of [1, 7, 42, 123, 999, 31337]) {
   const A = g.states[0], B = g.states[1];
   A.gold = 500; B.money = 5000; B.gold = 0;
   // сделка: игрок продаёт золото
-  let r = propose(g, 0, 1, 'deal', { seller: 0, buyer: 1, res: 'gold', amt: 5, price: 18, days: 30 });
+  let r = propose(g, 0, 1, 'deal', { seller: 0, buyer: 1, res: 'gold', amt: 5, price: 6, days: 30 });
   ok(r.ok, 'Аурелия должна купить ' + JSON.stringify(r));
   const m0 = A.money, g0 = A.gold;
   tick(g);
@@ -110,7 +111,7 @@ for (const seed of [1, 7, 42, 123, 999, 31337]) {
   ok(setBorder(g, 0, 1, true).ok && isClosed(g, 0, 1), 'граница не закрылась');
   ok(g.dip.deals.length === 0, 'сделки должны сниматься при закрытии границы');
   ok(!!tradeBlock(g, 0, 1), 'торговля должна быть заблокирована');
-  r = propose(g, 0, 1, 'deal', { seller: 0, buyer: 1, res: 'gold', amt: 5, price: 18, days: 30 });
+  r = propose(g, 0, 1, 'deal', { seller: 0, buyer: 1, res: 'gold', amt: 5, price: 6, days: 30 });
   ok(!r.ok, 'сделка через закрытую границу');
   setBorder(g, 0, 1, false);
   // договоры
@@ -121,7 +122,7 @@ for (const seed of [1, 7, 42, 123, 999, 31337]) {
   ok(!setBorder(g, 0, 1, true).ok, 'союзнику нельзя закрыть границу');
   ok(breakPact(g, 0, 1).ok && statusOf(g, 0, 1) === 'neutral', 'расторжение не сработало');
   // война
-  createDeal(g, { seller: 0, buyer: 1, res: 'gold', amt: 2, price: 18, days: 0 });
+  createDeal(g, { seller: 0, buyer: 1, res: 'gold', amt: 2, price: 6, days: 0 });
   ok(declareWar(g, 0, 1).ok && statusOf(g, 0, 1) === 'war', 'война не объявлена');
   ok(g.dip.deals.length === 0 && isClosed(g, 0, 1), 'война должна рвать сделки и закрывать границу');
   ok(!setBorder(g, 0, 1, false).ok, 'во время войны границу открыть нельзя');
@@ -138,6 +139,57 @@ for (const seed of [1, 7, 42, 123, 999, 31337]) {
   ok(cp.dip.closed[1][2] === true && cp.dip.rel.length === 4, 'дипломатия не сохранилась');
   for (let i = 0; i < 30; i++) tick(cp);
 }
+
+// экономика: рынок, склады, еда, содержание
+{
+  const g = newGame({ seed: 31, playerState: 0 });
+  const s = g.states[0];
+  s.steel = 1500; s.marketLeft = 1000;
+  const m0 = s.money;
+  const r = marketTrade(g, s, 'steel', 400, 'sell');
+  ok(r.ok && s.money > m0 && s.steel === 1100, 'продажа на рынке');
+  ok(marketSellPrice('steel', 2000) < marketSellPrice('steel', 100), 'цена продажи падает с запасом');
+  ok(marketSellPrice('steel', 1e6) >= 0.4 * 1.2 - 1e-9, 'пол цены продажи 40%');
+  ok(marketBuyPrice('fuel', 0) > marketBuyPrice('fuel', 600), 'цена покупки растёт с дефицитом');
+  s.marketLeft = 5;
+  ok(marketTrade(g, s, 'steel', 400, 'sell').amt === 5, 'дневной лимит торговли');
+  s.marketLeft = 0;
+  ok(!marketTrade(g, s, 'steel', 10, 'sell').ok, 'лимит исчерпан');
+  // склад: излишек сверх лимита продаётся
+  s.ore = s.cap + 500;
+  const mm = s.money; tick(g);
+  ok(s.ore <= s.cap + 1 && s.money > mm, 'излишек сверх склада должен продаваться');
+  // отмена стройки возвращает деньги
+  const cap = g.provs[s.capital];
+  s.money = 5000; s.steel = 500;
+  const before = s.money;
+  ok(startBuild(g, cap, 'warehouse') === null || startBuild(g, g.provs.find((p) => p.owner === 0 && p.buildings.length < 3 && !p.capital), 'warehouse') === null, 'склад построен');
+  const owner = g.provs.find((p) => p.buildings.some((b) => b.type === 'warehouse' && b.buildLeft > 0));
+  const idx = owner.buildings.findIndex((b) => b.type === 'warehouse' && b.buildLeft > 0);
+  ok(s.money < before, 'стройка списала деньги');
+  ok(cancelBuild(g, owner, idx) === null && s.money > before - 200, 'отмена стройки возвращает деньги');
+  // еда: без ферм город голодает
+  const g2 = newGame({ seed: 32, playerState: 1 });
+  const s2 = g2.states[1];
+  s2.food = 0;
+  for (const p of g2.provs) if (p.owner === 1) p.buildings = p.buildings.filter((b) => b.type !== 'farm');
+  tick(g2);
+  ok(s2.foodRatio < 0.1 && s2.foodNeed > 50, 'без еды foodRatio должен падать');
+  // прогноз окупаемости
+  const f = forecast('mine', 1, { deposits: { steel: 1 } });
+  ok(f.net > 0 && f.payback > 5 && f.payback < 200, 'прогноз окупаемости рудника');
+  // ГЭС только у реки
+  const hp = g.provs.find((p) => p.hasRiver && p.owner === 0);
+  if (hp) { s.money = 1e5; s.steel = 1e4; const e = startBuild(g, hp, 'hydro'); ok(e === null || e === 'Нет подходящего места' || e === 'Нет свободных мест', 'ГЭС: ' + e); }
+  const nr = g.provs.find((p) => !p.hasRiver);
+  ok(nr && buildError(g, nr, 'hydro') !== null, 'ГЭС без реки запрещена');
+  // третий уровень требует электронику
+  const lv = g.provs.find((p) => p.owner === 0 && p.buildings.length);
+  lv.buildings[0].level = 2; lv.buildings[0].buildLeft = 0; lv.buildings[0].target = 2;
+  s.electronics = 0; s.money = 1e6; s.steel = 1e5;
+  ok(/электроника/i.test(require_up(g, lv)), 'улучшение до 3 ур. без электроники');
+}
+function require_up(g, p) { return upgradeErr(g, p, 0) || ''; }
 
 console.log(fails === 0 ? 'ВСЕ ПРОВЕРКИ ПРОШЛИ' : `ПРОВАЛОВ: ${fails}`);
 process.exit(fails ? 1 : 0);

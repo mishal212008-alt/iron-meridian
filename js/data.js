@@ -16,8 +16,8 @@ export const NAMES = [
   'Альтенау', 'Бирнхольм', 'Ворхейм', 'Грюнвальд', 'Дрезден-Ост', 'Ильмар', 'Каррен', 'Лоренсбург', 'Мельхиор', 'Нордвальд', 'Оттенхейм', 'Пирсвик', 'Равенхолл', 'Свенборг', 'Тирнау', 'Эйнхольм', 'Ястребиный Мыс', 'Белая Гавань', 'Серебряный Ключ', 'Железный Брод', 'Каменка', 'Озёрный', 'Приморск-Ост', 'Северный Предел', 'Тихая Бухта', 'Золотая Долина', 'Ветролом', 'Громовая', 'Дубрава', 'Еловая', 'Ясный Берег', 'Волчий Лог', 'Зелёный Холм', 'Лунная Пристань', 'Медный Рудник', 'Новый Стрелецк', 'Орлиное', 'Рассвет', 'Соколиный', 'Туманный', 'Угольный', 'Хрустальный', 'Чёрная Скала', 'Шторм-Бей', 'Янтарная', 'Арден-Тор', 'Брекенридж', 'Валлорн', 'Гэлвей-Ост', 'Дорнхейм', 'Эстуария', 'Форт-Рейн', 'Гранитный', 'Хэвенмор', 'Ирония', 'Кингсмарк', 'Ластхольм', 'Монтерра', 'Нордкап', 'Окрестность', 'Портеро', 'Квартхейм', 'Ривервуд', 'Сансет-Холл', 'Тэрнбридж',
 ];
 
-export const RES = ['money', 'steel', 'fuel', 'electronics', 'gold', 'rare'];
-export const TRADE_RES = ['steel', 'fuel', 'electronics', 'gold', 'rare']; // то, чем можно торговать
+export const RES = ['money', 'steel', 'fuel', 'electronics', 'gold', 'rare', 'ore', 'food'];
+export const TRADE_RES = ['ore', 'steel', 'fuel', 'food', 'electronics', 'gold', 'rare']; // то, чем можно торговать
 export const RES_LABEL = {
   money: 'Деньги',
   steel: 'Сталь',
@@ -25,11 +25,15 @@ export const RES_LABEL = {
   electronics: 'Электроника',
   gold: 'Золото',
   rare: 'Редкие металлы',
+  ore: 'Руда',
+  food: 'Еда',
   energy: 'Энергия',
 };
-export const RES_ICON = { money: '💰', steel: '🔩', fuel: '⛽', electronics: '🔌', gold: '🪙', rare: '💎', energy: '⚡' };
+export const RES_ICON = { money: '💰', steel: '🔩', fuel: '⛽', electronics: '🔌', gold: '🪙', rare: '💎', ore: '⛰️', food: '🌾', energy: '⚡' };
 // Справочная цена за единицу (деньги). От неё считаются все сделки.
-export const BASE_PRICE = { steel: 4, fuel: 5, electronics: 22, gold: 18, rare: 14 };
+export const BASE_PRICE = { ore: 0.8, steel: 1.2, fuel: 1.5, food: 2, electronics: 12, gold: 6, rare: 5 };
+// Целевой запас: выше него рыночная цена продажи падает (до 40% базовой)
+export const STOCK_TARGET = { ore: 600, steel: 500, fuel: 500, food: 400, electronics: 150, gold: 150, rare: 150 };
 
 // Месторождения: что это, чем добывается
 export const DEPOSITS = {
@@ -43,13 +47,13 @@ export const DEPOSIT_KINDS = Object.keys(DEPOSITS);
 // Вымышленные государства (без реальных флагов и названий)
 export const STATES_DEF = [
   { id: 0, name: 'Нордия', color: '#5b8fd9', desc: 'Холодный север: много руды и редких металлов, мало нефти, нет золота.',
-    deposits: { steel: 'A', rare: 'A', oil: 'S', gold: 0 }, trait: { greed: 1.0, hostile: 0.5 } },
+    deposits: { steel: 'A', rare: 'A', oil: 'S', gold: 0 }, trait: { greed: 1.0, hostile: 0.5 }, bonus: { ore: 1.15 }, perk: '+15% к добыче руды' },
   { id: 1, name: 'Аурелия', color: '#d9a441', desc: 'Торговая республика: золото и нефть, но нет руды.',
-    deposits: { gold: 'A', oil: 'A', rare: 'S', steel: 0 }, trait: { greed: 1.25, hostile: 0.2 } },
+    deposits: { gold: 'A', oil: 'A', rare: 'S', steel: 0 }, trait: { greed: 1.25, hostile: 0.2 }, bonus: { tax: 1.15, sell: 1.15 }, perk: '+15% к налогам и продажам' },
   { id: 2, name: 'Каспия', color: '#c4574f', desc: 'Нефтяная федерация: нефть и руда, нет редких металлов.',
-    deposits: { oil: 'A', steel: 'A', gold: 'S', rare: 0 }, trait: { greed: 0.9, hostile: 0.8 } },
+    deposits: { oil: 'A', steel: 'A', gold: 'S', rare: 0 }, trait: { greed: 0.9, hostile: 0.8 }, bonus: { fuel: 1.15 }, perk: '+15% к выпуску топлива' },
   { id: 3, name: 'Венедия', color: '#6aa86a', desc: 'Лесной союз: золото и редкие металлы, мало нефти и руды.',
-    deposits: { gold: 'A', rare: 'A', steel: 'S', oil: 'S' }, trait: { greed: 1.0, hostile: 0.3 } },
+    deposits: { gold: 'A', rare: 'A', steel: 'S', oil: 'S' }, trait: { greed: 1.0, hostile: 0.3 }, bonus: { growth: 1.1 }, perk: '+10% к росту населения' },
 ];
 // 'A' — богатые недра (несколько месторождений), 'S' — одно скромное, 0 — нет совсем.
 
@@ -68,7 +72,7 @@ export const TERRAIN = {
 };
 
 // Стартовые ресурсы любого государства
-export const START = { money: 700, steel: 110, fuel: 90, electronics: 0, gold: 15, rare: 10 };
+export const START = { money: 700, steel: 110, fuel: 90, electronics: 0, gold: 15, rare: 10, ore: 40, food: 400 };
 
 // Здания.
 // cost — цена 1 уровня (каждый следующий дороже в LEVEL_COST_MULT раз)
@@ -87,12 +91,12 @@ export const BUILDINGS = {
   },
   mine: {
     name: 'Рудник', icon: '⛏️', cost: { money: 450, steel: 10 }, days: 8,
-    jobs: 300, energy: 6, produces: { steel: 12 }, needs: 'steel',
-    desc: 'Добывает сталь. Нужно месторождение руды.',
+    jobs: 300, energy: 6, produces: { ore: 12 }, needs: 'steel',
+    desc: 'Добывает руду. Нужно месторождение руды. Из руды на заводе плавят сталь.',
   },
   refinery: {
     name: 'НПЗ', icon: '🛢️', cost: { money: 650, steel: 40 }, days: 10,
-    jobs: 350, energy: 8, produces: { fuel: 14 }, needs: 'oil',
+    jobs: 350, energy: 8, produces: { fuel: 12 }, needs: 'oil',
     desc: 'Перерабатывает нефть в топливо. Нужно месторождение нефти.',
   },
   power: {
@@ -102,12 +106,32 @@ export const BUILDINGS = {
   },
   steelworks: {
     name: 'Сталелитейный завод', icon: '🏭', cost: { money: 900, steel: 60 }, days: 12,
-    jobs: 450, energy: 12, consumes: { fuel: 3 }, produces: { steel: 9 },
-    desc: 'Плавит сталь из топлива. Не зависит от руды, но жжёт топливо.',
+    jobs: 450, energy: 12, consumes: { ore: 6, fuel: 1 }, produces: { steel: 10 },
+    desc: 'Руда и топливо → сталь. Сталь нужна для стройки и электроники.',
+  },
+  farm: {
+    name: 'Ферма', icon: '🌾', cost: { money: 350, steel: 10 }, days: 6,
+    jobs: 120, energy: 2, produces: { food: 24 }, needsFlat: true,
+    desc: 'Выращивает еду. Только на ровной земле без леса. Город ест 1 ед. в день на 100 жителей.',
+  },
+  hydro: {
+    name: 'Гидростанция', icon: '💧', cost: { money: 700, steel: 50 }, days: 10,
+    jobs: 120, energy: -22, needsRiver: true,
+    desc: 'Даёт энергию без топлива. Строится только у реки.',
+  },
+  warehouse: {
+    name: 'Склад', icon: '📦', cost: { money: 600, steel: 50 }, days: 7,
+    jobs: 40, energy: 1, storage: 3000,
+    desc: 'Увеличивает лимит хранения каждого ресурса на 3000 за уровень.',
+  },
+  port: {
+    name: 'Порт / торговый пост', icon: '⚓', cost: { money: 900, steel: 60 }, days: 10,
+    jobs: 150, energy: 4, market: 120,
+    desc: 'Увеличивает дневной лимит торговли на мировом рынке на 120 ед. за уровень.',
   },
   goldmine: {
     name: 'Золотой рудник', icon: '🪙', cost: { money: 700, steel: 30 }, days: 9,
-    jobs: 280, energy: 6, produces: { gold: 4 }, needs: 'gold',
+    jobs: 280, energy: 6, produces: { gold: 3 }, needs: 'gold',
     desc: 'Добывает золото. Нужно месторождение золота. Золото ценится в торговле.',
   },
   raremine: {
@@ -122,7 +146,7 @@ export const BUILDINGS = {
   },
 };
 
-export const BUILD_ORDER = ['housing', 'power', 'mine', 'refinery', 'goldmine', 'raremine', 'steelworks', 'electronics'];
+export const BUILD_ORDER = ['housing', 'farm', 'power', 'hydro', 'mine', 'refinery', 'steelworks', 'electronics', 'goldmine', 'raremine', 'warehouse', 'port'];
 
 // Города: уровень зависит от населения, определяет число слотов
 export const CITY_LEVELS = [
@@ -132,9 +156,23 @@ export const CITY_LEVELS = [
 ];
 
 export const ECON = {
+  upkeepRate: 0.004,      // содержание здания в день от его цены за уровень
+  storageBase: 2000,      // лимит хранения любого ресурса без складов
+  marketBase: 40,         // дневной лимит торговли на рынке (ед.)
+  sellFloor: 0.4,         // нижняя граница цены продажи от базовой
+  buyMarkup: 1.25,        // наценка покупки
+  overflowPrice: 0.4,     // по какой доле базовой цены продаётся излишек сверх склада
+  foodPer100: 1,          // еды в день на 100 жителей
+  famineDays: 10,         // сколько дней голода до убыли населения
+  hireShare: 0.3,         // доля свободных рабочих соседей, которых можно нанять
+  upgElecDiv: 60,         // электроника для улучшения до 3 ур. = деньги / это число
+  energyValue: 0.6,       // условная цена единицы энергии (для прогноза окупаемости)
+  cancelRefund: 0.8,      // возврат при отмене стройки
+  botEvery: { easy: 8, normal: 4, hard: 2 },
+  botIncome: { easy: 0.9, normal: 1, hard: 1.15 },
   workerShare: 0.6, // доля населения, которая может работать
-  taxPerPop: 0.004,
-  taxPerJob: 0.02,
+  taxPerPop: 0.006,
+  taxPerJob: 0.03,
   extractorFloor: 0.3, // добыча идёт от автономных генераторов даже без сети
   growth: 0.004,
   baseCapCapital: 3500,

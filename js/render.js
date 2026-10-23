@@ -171,7 +171,61 @@ function modelRaremine(level) {
   for (let i = 0; i < 3; i++) g.add(cone(0.035, 0.12 + i * 0.03, i % 2 ? 0x8f7fe0 : 0x58c5e8, 0.26 + i * 0.06, 0.025, 0.22 - (i % 2) * 0.05, 5));
   return g;
 }
-const MODELS = { housing: modelHousing, mine: modelMine, goldmine: modelGoldmine, raremine: modelRaremine, refinery: modelRefinery, power: modelPower, electronics: modelElectronics, steelworks: modelSteelworks };
+function modelFarm(level) {
+  const g = new THREE.Group();
+  g.add(pad(0.66, 0.54, 0x8a9a52));
+  // грядки
+  for (let i = 0; i < 3 + level; i++) g.add(box(0.5, 0.012, 0.05, i % 2 ? 0xc9b35a : 0x6f9a3c, -0.02, 0.025, -0.22 + i * 0.075));
+  g.add(box(0.2, 0.12, 0.14, 0xb8473a, 0.2, 0.025, 0.16));                       // амбар
+  g.add(rot(box(0.22, 0.02, 0.16, 0x6b3a30, 0.2, 0.15, 0.16), 0, 0, 0));
+  g.add(cyl(0.05, 0.2, 0xd8dade, -0.2, 0.025, 0.18, 12));                         // силос
+  g.add(cone(0.055, 0.05, 0x9aa0a6, -0.2, 0.225, 0.18, 12));
+  if (level > 1) { g.add(cyl(0.045, 0.16, 0xd8dade, -0.08, 0.025, 0.2, 12)); g.add(cone(0.05, 0.04, 0x9aa0a6, -0.08, 0.185, 0.2, 12)); }
+  if (level > 2) g.add(box(0.08, 0.05, 0.05, 0xd8a52c, 0.02, 0.025, 0.2));       // трактор
+  return g;
+}
+function modelHydro(level) {
+  const g = new THREE.Group();
+  g.add(pad(0.66, 0.54, 0x6f8896));
+  g.add(box(0.56, 0.12, 0.12, 0xb9c1c8, 0, 0.025, -0.1));                         // плотина
+  g.add(box(0.58, 0.015, 0.14, 0x7a8590, 0, 0.145, -0.1));
+  g.add(box(0.5, 0.005, 0.2, 0x3b8fd6, 0, 0.03, 0.12));                           // вода
+  const n = 1 + level;
+  for (let i = 0; i < n; i++) g.add(box(0.08, 0.1, 0.1, 0xe3e6ea, -0.2 + (i * 0.4) / Math.max(1, n - 1 || 1), 0.025, 0.0));
+  g.add(box(0.16, 0.14, 0.12, 0x8d979f, 0.22, 0.025, 0.12));
+  for (let i = 0; i < 2; i++) g.add(box(0.012, 0.16, 0.012, 0x6a7078, 0.12 + i * 0.06, 0.025, 0.2));
+  return g;
+}
+function modelWarehouse(level) {
+  const g = new THREE.Group();
+  g.add(pad(0.66, 0.54, 0x6c7178));
+  const n = 1 + Math.min(level, 2);
+  for (let i = 0; i < n; i++) {
+    g.add(box(0.46, 0.14, 0.14, i % 2 ? 0xb58a4a : 0x9aa6b0, 0, 0.025, -0.2 + i * 0.18));
+    g.add(box(0.48, 0.02, 0.16, 0x4f5a66, 0, 0.165, -0.2 + i * 0.18));
+    g.add(box(0.1, 0.08, 0.01, 0x3a4048, 0.12, 0.03, -0.12 + i * 0.18));
+  }
+  for (let i = 0; i < 3; i++) g.add(box(0.06, 0.05, 0.05, [0xd8a52c, 0x4a7fb5, 0xb8473a][i], -0.24 + i * 0.07, 0.025, 0.22));
+  return g;
+}
+function modelPort(level) {
+  const g = new THREE.Group();
+  g.add(pad(0.66, 0.54, 0x58707e));
+  g.add(box(0.6, 0.01, 0.2, 0x2f78b5, 0, 0.022, 0.2));                            // акватория
+  g.add(box(0.5, 0.03, 0.06, 0x9a9388, 0, 0.025, 0.08));                          // причал
+  // краны
+  for (let i = 0; i < 1 + Math.min(level, 2); i++) {
+    const x = -0.18 + i * 0.2;
+    g.add(box(0.015, 0.24, 0.015, 0xd89a2c, x, 0.05, 0.06));
+    g.add(box(0.015, 0.015, 0.2, 0xd89a2c, x, 0.29, 0.0));
+  }
+  // контейнеры
+  const cols = [0xb8473a, 0x3d77b5, 0xd8a52c, 0x4f9a5a];
+  for (let i = 0; i < 6; i++) g.add(box(0.1, 0.05, 0.05, cols[i % 4], -0.22 + (i % 3) * 0.12, 0.025 + Math.floor(i / 3) * 0.05, -0.12));
+  g.add(box(0.14, 0.1, 0.1, 0x8e979f, 0.24, 0.025, -0.14));
+  return g;
+}
+const MODELS = { housing: modelHousing, mine: modelMine, goldmine: modelGoldmine, raremine: modelRaremine, refinery: modelRefinery, power: modelPower, electronics: modelElectronics, steelworks: modelSteelworks, farm: modelFarm, hydro: modelHydro, warehouse: modelWarehouse, port: modelPort };
 
 function scaffold() {
   const g = new THREE.Group();
