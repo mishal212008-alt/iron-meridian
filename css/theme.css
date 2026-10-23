@@ -1,0 +1,35 @@
+/* Тема «Железный Меридиан»: графитово-оливковые панели, один оранжевый акцент.
+   Все цвета, радиусы и размеры интерфейса меняются здесь. */
+:root {
+  --bg: #14160f;
+  --panel: #1d2118;
+  --panel2: #272c20;
+  --panel3: #31372a;
+  --line: #3d4533;
+  --text: #eef0e4;
+  --muted: #9ea88d;
+  --accent: #ff9a2e;          /* главный акцент: вкладки, заголовки, ключевые цифры */
+  --accent-d: #5b3a12;
+  --on-accent: #1d1200;
+  --danger: #e5483d;          /* только главное действие и тревоги */
+  --amber: #f2c14b;
+  --pos: #7bd36b;
+  --neg: #f0594d;
+  --warn: #f2c14b;
+  --radius: 12px;
+  --radius-s: 9px;
+  --stroke: 2px;
+  --nav-h: 64px;
+  --tap: 48px;
+  --fs: 14px;
+  --t-fast: 140ms;
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', sans-serif;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --t-fast: 0ms; }
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

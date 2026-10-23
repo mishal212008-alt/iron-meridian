@@ -638,3 +638,26 @@ export function deserialize(text) {
   for (const s of g.states) updateCaps(g, s);
   return g;
 }
+
+// ---- сводные показатели для интерфейса ----
+// Настроение 0..100: еда, энергия, занятость
+export function moodOf(g, s) {
+  const mine = g.provs.filter((p) => p.owner === s.id);
+  let pop = 0, work = 0, jobs = 0;
+  for (const p of mine) { pop += p.pop; work += p.pop * ECON.workerShare; jobs += Math.min(jobsOf(p), p.pop * ECON.workerShare + (p.hired || 0)); }
+  const employ = work > 0 ? Math.min(1, jobs / work) : 1;
+  const m = 0.4 * Math.min(1, s.foodRatio) + 0.3 * Math.min(1, s.energy.ratio) + 0.3 * employ;
+  return Math.round(m * 100);
+}
+export const totalPop = (g, s) => g.provs.reduce((a, p) => a + (p.owner === s.id ? p.pop : 0), 0);
+// доля самого заполненного склада
+export function storageFill(s) {
+  let m = 0, k0 = null;
+  for (const k of TRADE_RES) { const f = s[k] / s.cap; if (f > m) { m = f; k0 = k; } }
+  return { fill: m, res: k0 };
+}
+// безработица города 0..1 (доля трудоспособных без места)
+export function unemployment(p) {
+  const w = p.pop * ECON.workerShare;
+  return w > 0 ? Math.max(0, 1 - jobsOf(p) / w) : 0;
+}

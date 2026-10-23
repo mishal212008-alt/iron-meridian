@@ -1,9 +1,11 @@
 // HTML-панели интерфейса (без состояния: всё берётся из игры).
-import { BUILDINGS, BUILD_ORDER, CITY_LEVELS, DEPOSITS, DEPOSIT_KINDS, ECON, MAX_LEVEL, RES, RES_ICON, RES_LABEL, STATES_DEF, TERRAIN, TRADE_RES } from './data.js';
+import { BASE_PRICE, BUILDINGS, BUILD_ORDER, CITY_LEVELS, DEPOSITS, DEPOSIT_KINDS, ECON, MAX_LEVEL, RES, RES_ICON, RES_LABEL, STATES_DEF, STOCK_TARGET, TERRAIN, TRADE_RES } from './data.js';
 import {
   STATUS_LABEL, dealsBetween, evaluate, fairPrice, hintsFor, isClosed, offerError, offerText, relOf, relWord, statusOf, summarizeNeeds, tradeBlock, valueFor,
 } from './diplomacy.js';
-import { buildError, canAfford, cityName, cityProduction, costOf, housingCap, jobsOf, levelOf, slots, staffing, upgradeError } from './sim.js';
+import {
+  QUESTS, buildError, canAfford, cityName, cityProduction, costOf, currentQuest, forecast, housingCap, jobsOf, levelOf, marketBuyPrice, marketSellPrice, moodOf, slots, staffing, storageFill, totalPop, unemployment, upgradeError,
+} from './sim.js';
 
 export function fmt(n) {
   const a = Math.abs(n);
@@ -17,24 +19,105 @@ const pct = (x) => Math.round(x * 100) + '%';
 export const TABS = {
   city: { icon: '🏙️', name: 'Город' },
   build: { icon: '🏗️', name: 'Строить' },
-  prod: { icon: '🏭', name: 'Производство' },
+  prod: { icon: '🏭', name: 'Заводы' },
   res: { icon: '🧭', name: 'Ресурсы' },
+  budget: { icon: '💰', name: 'Бюджет' },
   dip: { icon: '🤝', name: 'Дипломатия' },
   state: { icon: '📊', name: 'Страна' },
+  flow: { icon: '📈', name: 'Разбор' },
+};
+
+const chip = (id, cap, val, delta, cls = '', tab = '') =>
+  `<button class="stat-chip ${cls}" data-act="chip" data-k="${id}" data-tab="${tab}"><small>${cap}</small><b data-v="${id}">${val}</b>${delta ? `<i class="${delta[1]}">${delta[0]}</i>` : ''}</button>`;
+const dl = (r, unit = '/д') => {
+  const c = r > 0.05 ? 'pos' : r < -0.05 ? 'neg' : '';
+  return [signed(r) + unit, c];
 };
 
 export function resbarHtml(g) {
   const s = g.states[g.playerState];
-  const items = RES.map((k) => {
-    const r = s.rate[k] || 0;
-    const cls = r > 0.05 ? 'pos' : r < -0.05 ? 'neg' : '';
-    return `<span class="res" title="${RES_LABEL[k]}"><b>${RES_ICON[k]}</b>${fmt(s[k])}<i class="${cls}">${signed(r)}</i></span>`;
-  });
+  const mood = moodOf(g, s);
+  const sf = storageFill(s);
   const ep = Math.round(s.energy.ratio * 100);
-  const ecls = ep >= 95 ? 'pos' : ep >= 60 ? 'warn' : 'neg';
-  items.push(`<span class="res" title="Энергия: выработка / потребление"><b>⚡</b><i class="${ecls}">${ep}%</i></span>`);
-  return items.join('');
+  const en = s.energy.supply - s.energy.demand;
+  const pop = totalPop(g, s);
+  const popPrev = s.popPrev ?? pop;
+  const out = [];
+  out.push(chip('money', 'Деньги', fmt(s.money) + '💰', dl(s.rate.money || 0), 'key' + ((s.rate.money || 0) < -0.05 || s.debt ? ' neg' : ''), 'budget'));
+  out.push(chip('pop', 'Население', fmt(pop), dl(pop - popPrev, ''), '', 'city'));
+  out.push(chip('energy', 'Энергия', ep + '%', [signed(en), en >= 0 ? 'pos' : 'neg'], ep < 60 ? 'neg' : ep < 95 ? 'warn' : '', 'flow'));
+  out.push(chip('steel', 'Сталь', fmt(s.steel), dl(s.rate.steel || 0), (s.rate.steel || 0) < -0.05 ? 'neg' : '', 'flow'));
+  out.push(chip('fuel', 'Топливо', fmt(s.fuel), dl(s.rate.fuel || 0), (s.rate.fuel || 0) < -0.05 && s.fuel < 150 ? 'neg' : '', 'flow'));
+  out.push(chip('electronics', 'Электроника', fmt(s.electronics), dl(s.rate.electronics || 0), '', 'flow'));
+  out.push(chip('food', 'Еда', fmt(s.food), dl(s.rate.food || 0), s.foodRatio < 0.9 ? 'neg' : '', 'flow'));
+  out.push(chip('storage', 'Склад', Math.round(sf.fill * 100) + '%', null, sf.fill > 0.95 ? 'neg' : sf.fill > 0.8 ? 'warn' : '', 'res'));
+  out.push(chip('mood', 'Настроение', mood + '%', null, mood < 50 ? 'neg' : mood < 75 ? 'warn' : '', 'state'));
+  return out.join('');
 }
+
+// ---- оповещения (тап — к городу) ----
+export function alertsOf(g) {
+  const s = g.states[g.playerState];
+  const mine = g.provs.filter((p) => p.owner === g.playerState);
+  const cap = g.provs[s.capital];
+  const out = [];
+  if (s.energy.ratio < 0.95) out.push({ kind: 'bad', text: `⚡ Нехватка энергии ${Math.round(s.energy.ratio * 100)}%`, pid: cap.id });
+  if (s.foodRatio < 0.95 || s.food < s.foodNeed * 3) {
+    const worst = mine.slice().sort((a, b) => b.pop - a.pop)[0];
+    out.push({ kind: s.foodRatio < 0.9 ? 'bad' : 'warn', text: s.foodRatio < 0.9 ? '🌾 Голод: постройте ферму' : '🌾 Еда на исходе', pid: (worst || cap).id });
+  }
+  const short = mine.filter((p) => jobsOf(p) > 0 && staffing(p) < 0.8).sort((a, b) => staffing(a) - staffing(b))[0];
+  if (short) out.push({ kind: 'warn', text: `👷 Не хватает рабочих: ${short.name}`, pid: short.id });
+  const sf = storageFill(s);
+  if (sf.fill > 0.9) out.push({ kind: 'warn', text: `📦 Склад почти полон (${RES_ICON[sf.res]})`, pid: cap.id });
+  if (s.debt) out.push({ kind: 'bad', text: '💸 Казна пуста', pid: -1 });
+  const q = currentQuest(g);
+  if (q) out.push({ kind: 'good', text: `🎯 ${q.text}`, pid: -1, act: 'goals' });
+  return out;
+}
+export function alertsHtml(g) {
+  return alertsOf(g).map((a) => `<button class="alert ${a.kind}" data-act="${a.act || 'alert'}" data-pid="${a.pid}">${a.text}</button>`).join('');
+}
+export function ribbonHtml(g) {
+  if (!g.feed.length) return '<span class="none">События появятся здесь</span>';
+  return g.feed.slice(0, 12).map((e) => `<button class="ev ${e.kind || ''}" data-act="alert" data-pid="${e.pid}"><small>д.${e.day}</small>${e.text}</button>`).join('');
+}
+
+// ---- мини-превью зданий (рисуются сверху, без внешних картинок) ----
+const PV = {};
+export function previewUrl(type, level = 1) {
+  const key = type + level;
+  if (PV[key] !== undefined) return PV[key];
+  let url = '';
+  try {
+    const c = document.createElement('canvas');
+    c.width = c.height = 96;
+    const x = c.getContext('2d');
+    if (x) {
+      const R = (cx, cy, w, h, col, r = 3) => { x.fillStyle = col; x.beginPath(); (x.roundRect || x.rect).call(x, cx, cy, w, h, r); x.fill(); };
+      const C = (cx, cy, r, col) => { x.fillStyle = col; x.beginPath(); x.arc(cx, cy, r, 0, 7); x.fill(); };
+      const grd = { farm: '#8a9a52', hydro: '#4b7f9a', warehouse: '#6c7178', port: '#4a6f84', housing: '#7c8a4e', mine: '#6b5a44', goldmine: '#6b5a44', raremine: '#55506b', refinery: '#555a60', power: '#6a7078', steelworks: '#55504a', electronics: '#5a6a78' }[type] || '#666';
+      R(4, 4, 88, 88, grd, 14);
+      const n = Math.min(level, 3);
+      if (type === 'housing') { for (let i = 0; i < 3 + n; i++) R(12 + (i % 3) * 26, 14 + Math.floor(i / 3) * 34, 22, 26, ['#c4553f', '#4f7ec2', '#9aa0a6', '#9a6b48'][i % 4], 4); }
+      else if (type === 'farm') { for (let i = 0; i < 4; i++) R(10, 12 + i * 14, 50, 9, i % 2 ? '#c9b35a' : '#6f9a3c', 3); R(62, 40, 24, 22, '#b8473a', 4); C(74, 20, 9 + n * 2, '#d8dade'); }
+      else if (type === 'hydro') { R(8, 26, 80, 18, '#c8d0d6', 4); R(8, 52, 80, 30, '#2f78b5', 6); for (let i = 0; i <= n; i++) R(16 + i * 22, 30, 12, 10, '#7a8590', 2); }
+      else if (type === 'warehouse') { for (let i = 0; i < 1 + n; i++) R(10, 12 + i * 26, 76, 20, i % 2 ? '#b58a4a' : '#9aa6b0', 3); R(60, 74, 12, 10, '#d8a52c', 2); }
+      else if (type === 'port') { R(6, 56, 84, 34, '#2f78b5', 6); R(10, 44, 76, 10, '#9a9388', 2); for (let i = 0; i < 1 + n; i++) R(18 + i * 26, 14, 6, 30, '#d89a2c', 2); R(14, 18, 18, 10, '#b8473a', 2); }
+      else if (type === 'mine' || type === 'goldmine' || type === 'raremine') { C(34, 52, 22, '#2b2a2a'); R(54, 18, 28, 26, '#8d949b', 4); R(12, 14, 36, 8, '#555', 2); C(70, 70, 8, type === 'goldmine' ? '#f2c94c' : type === 'raremine' ? '#58c5e8' : '#8b7a60'); }
+      else if (type === 'refinery') { C(26, 30, 14, '#d8dade'); C(26, 66, 14, '#d8dade'); C(62, 30, 12, '#b8bec4'); R(52, 54, 34, 12, '#93392d', 3); R(56, 74, 6, 14, '#70777e', 2); }
+      else if (type === 'power') { for (let i = 0; i < 1 + n; i++) C(26 + i * 24, 28, 14, '#d4d6da'); C(70, 66, 8, '#b83a30'); R(12, 56, 44, 26, '#a9b2ba', 3); }
+      else if (type === 'steelworks') { C(28, 30, 12, '#8b4a3a'); R(48, 18, 36, 14, '#6f757b', 3); R(12, 56, 70, 20, '#474c52', 3); C(72, 40, 7, '#ff7a1a'); }
+      else if (type === 'electronics') { R(12, 22, 56, 26, '#cdd2d8', 3); for (let i = 0; i < 4; i++) R(14 + i * 14, 24, 10, 22, '#9aa3ab', 2); R(70, 40, 16, 28, '#8db2cc', 3); R(12, 58, 60, 12, '#39424c', 3); }
+      for (let i = 0; i < n; i++) { x.fillStyle = '#ff9a2e'; x.fillRect(8 + i * 10, 86, 8, 5); }
+      url = c.toDataURL();
+    }
+  } catch { url = ''; }
+  PV[key] = url;
+  return url;
+}
+const pvImg = (type, level = 1) => { const u = previewUrl(type, level); return u ? `<img class="pvimg" src="${u}" alt="">` : `<div class="pvimg bicon">${BUILDINGS[type].icon}</div>`; };
+const lvSq = (lv) => `<span class="lvsq">${Array.from({ length: MAX_LEVEL }, (_, i) => `<i class="${i < lv ? 'on' : ''}"></i>`).join('')}</span>`;
 
 function costHtml(cost, s) {
   return Object.entries(cost).map(([k, v]) => `<span class="cost${s[k] < v ? ' lack' : ''}">${RES_ICON[k]}${fmt(v)}</span>`).join('');
@@ -62,18 +145,37 @@ function cityAdvice(g, p) {
   const s = g.states[p.owner];
   const cap = housingCap(p), jobs = jobsOf(p), workers = p.pop * ECON.workerShare;
   const has = (t) => p.buildings.some((b) => b.type === t);
+  if (s.foodRatio < 0.95) tips.push(['bad', 'Не хватает еды: рост остановлен, налог ниже. Построй ферму на равнине.']);
   if (p.pop >= cap * 0.9) tips.push(['warn', 'Жильё почти заполнено: рост остановится. Постройте жилой квартал.']);
   if (jobs < workers * 0.7) tips.push(['info', `Безработные: ${fmt(workers - jobs)} чел. Постройте производство, чтобы получать больше налогов.`]);
-  if (jobs > workers * 1.05) tips.push(['warn', 'Не хватает рабочих рук: здания работают не на полную мощность. Нужно жильё.']);
-  if (s.energy.ratio < 0.9) tips.push(['bad', 'В стране дефицит энергии. Постройте электростанцию и следите за топливом.']);
+  if (jobs > workers * 1.05) tips.push(['warn', (p.hired ? `Нанято ${fmt(p.hired)} рабочих из соседних городов, но этого мало. ` : '') + 'Не хватает рабочих рук: нужно жильё.']);
+  if (s.energy.ratio < 0.9) tips.push(['bad', 'В стране дефицит энергии. Постройте электростанцию (или ГЭС у реки) и следите за топливом.']);
   for (const k of DEPOSIT_KINDS) {
     if (p.deposits[k] && !has(DEPOSITS[k].building)) tips.push(['good', `Здесь есть месторождение (${DEPOSITS[k].name.toLowerCase()}): постройте «${BUILDINGS[DEPOSITS[k].building].name}».`]);
   }
+  if (p.hasRiver && !has('hydro')) tips.push(['info', 'У города есть река: гидростанция даёт энергию без топлива.']);
   if (p.buildings.length >= slots(p)) {
     const nxt = CITY_LEVELS[levelOf(p.pop) + 1];
     tips.push(['info', nxt ? `Все места заняты. Рост до «${nxt.name}» (${fmt(nxt.min)} чел.) даст новые места.` : 'Все места заняты.']);
   }
   return tips;
+}
+
+const needBar = (label, v, txt) => {
+  const c = v >= 0.95 ? 'ok' : v >= 0.6 ? 'mid' : 'bad';
+  return `<div class="need"><span>${label}</span><div class="bar"><div class="${c}" style="width:${Math.round(Math.min(1, v) * 100)}%"></div></div><b>${txt}</b></div>`;
+};
+export function bStatus(b) {
+  if (b.buildLeft > 0) return ['warn', b.level === 0 ? `строится, ${b.buildLeft} дн.` : `улучшается, ${b.buildLeft} дн.`];
+  if (b.limit) return ['bad', b.limit.text];
+  return ['okc', 'работает'];
+}
+
+export function questHtml(g) {
+  const q = currentQuest(g);
+  if (!q) return '';
+  const n = QUESTS.findIndex((x) => x.id === q.id) + 1;
+  return `<div class="quest"><div class="qi2">🎯</div><div><b>Совет штаба · цель ${n} из ${QUESTS.length}</b><div>${q.text}</div><small>Награда: ${q.reward}💰</small></div></div>`;
 }
 
 export function cityHtml(g, p) {
@@ -90,19 +192,31 @@ export function cityHtml(g, p) {
   const prog = next ? Math.min(1, (p.pop - cur.min) / (next.min - cur.min)) : 1;
 
   let html = head(`${p.capital ? '★ ' : ''}${p.name}`, `${dot(owner.color)}${owner.name} · ${cityName(p)} · ${TERRAIN[p.terrain].name}${p.coastal ? ' · у моря' : ''}`);
+  if (mine) html += questHtml(g);
 
   html += `<div class="growth"><div class="gl"><span>Население ${fmt(p.pop)} из ${fmt(cap)}</span><span>${next ? 'до «' + next.name + '» ' + fmt(next.min) : 'максимальный уровень'}</span></div>
       <div class="bar"><div style="width:${Math.round(prog * 100)}%" class="ok"></div></div></div>`;
 
+  if (mine) {
+    const fed = s.foodRatio, en = s.energy.ratio, st = staffing(p);
+    html += '<h3>Потребности</h3>';
+    html += needBar('🌾 Еда', fed, Math.round(fed * 100) + '%');
+    html += needBar('⚡ Энергия', en, Math.round(en * 100) + '%');
+    html += needBar('👷 Работа', Math.min(1, st), `${fmt(Math.min(workers + (p.hired || 0), jobs))}/${fmt(jobs)}`);
+    if (p.hired) html += `<div class="fc">👷 Нанято из соседних городов: <b>${fmt(p.hired)}</b> чел.</div>`;
+    else if (jobs > workers * 1.02) html += '<div class="fc">Соседи свободных рабочих не дают: нужно жильё.</div>';
+  }
+
   html += `<div class="facts">
-      <div><span>Работа</span><b>${fmt(Math.min(workers, jobs))} из ${fmt(workers)}</b></div>
-      <div><span>Рабочие места</span><b>${fmt(jobs)} (${pct(staffing(p))} заняты)</b></div>
+      <div><span>Трудоспособные</span><b>${fmt(workers)}</b></div>
+      <div><span>Рабочие места</span><b>${fmt(jobs)}</b></div>
       ${DEPOSIT_KINDS.map((k) => `<div><span>${DEPOSITS[k].name}</span><b>${p.deposits[k] ? DEPOSITS[k].icon + ' ' + (p.deposits[k] > 1 ? 'богатое' : 'есть') : '—'}</b></div>`).join('')}
+      ${p.hasRiver ? '<div><span>Река</span><b>🌊 есть</b></div>' : ''}
     </div>`;
 
   if (mine) {
     const tips = cityAdvice(g, p);
-    if (tips.length) html += '<div class="tips">' + tips.map(([k, t]) => `<div class="tip ${k}">${t}</div>`).join('') + '</div>';
+    if (tips.length) html += '<div class="tips">' + tips.slice(0, 4).map(([k, t]) => `<div class="tip ${k}">${t}</div>`).join('') + '</div>';
   }
 
   html += `<h3>Здания <small>${p.buildings.length}/${nSlots}</small></h3>`;
@@ -110,22 +224,24 @@ export function cityHtml(g, p) {
   p.buildings.forEach((b, i) => {
     const d = BUILDINGS[b.type];
     const building = b.buildLeft > 0;
-    const status = building
-      ? `<span class="tag work">🚧 ${b.level === 0 ? 'строится' : 'улучшение'}: ${b.buildLeft} дн.</span>`
-      : `<span class="tag">${ratesText(b.type, b.level)}${b.eff !== undefined && b.type !== 'housing' ? ' · загрузка ' + pct(b.eff) : ''}</span>`;
+    const [sc, st] = bStatus(b);
+    let effect = ratesText(b.type, Math.max(1, b.level));
+    if (!building && b.level > 0) { const f = forecast(b.type, b.level, p); if (b.type !== 'housing' && f.net) effect += ` · <b class="${f.net >= 0 ? 'pos' : 'neg'}">${signed(f.net)}💰/д</b>`; }
     let actions = '';
     if (mine) {
+      if (building) actions += `<button class="btn small" data-act="cancel" data-i="${i}" aria-label="Отменить стройку">↩ Отмена</button>`;
       if (!building && b.level < MAX_LEVEL) {
         const err = upgradeError(g, p, i);
-        actions += `<button class="btn small" data-act="upgrade" data-i="${i}" ${err ? 'disabled' : ''}>⬆ ${costHtml(costOf(b.type, b.level + 1), s)}</button>`;
+        const gain = forecast(b.type, b.level + 1, p).net - forecast(b.type, b.level, p).net;
+        actions += `<button class="btn small" data-act="upgrade" data-i="${i}" ${err ? 'disabled' : ''} title="${err || ''}">⬆ ${costHtml(costOf(b.type, b.level + 1), s)}${gain > 0.05 ? ` <b class="pos">${signed(gain)}</b>` : ''}</button>`;
       }
-      actions += `<button class="btn small ghost" data-act="demolish" data-i="${i}" aria-label="Снести">🗑</button>`;
+      if (!building) actions += `<button class="btn small ghost" data-act="demolish" data-i="${i}" aria-label="Снести">🗑</button>`;
     }
-    html += `<div class="brow"><div class="bicon">${d.icon}</div>
-        <div class="binfo"><b>${d.name}</b> <span class="lv">${b.level === 0 ? '' : 'ур. ' + b.level + '/' + MAX_LEVEL}</span><div>${status}</div></div>
-        <div class="bact">${actions}</div></div>`;
+    html += `<div class="brow pv">${pvImg(b.type, b.level)}
+        <div class="binfo"><b>${d.name}</b>${lvSq(b.level)}<div class="fc">${effect}</div><div class="stline ${sc}">${st}${b.eff !== undefined && !building && b.type !== 'housing' ? ' · ' + pct(Math.min(1, b.eff)) : ''}</div>
+        ${mine ? `<div class="bact">${actions}</div>` : ''}</div></div>`;
   });
-  if (mine) html += `<button class="btn big" data-act="tab" data-tab="build">🏗️ Строить в городе «${p.name}»</button>`;
+  if (mine) html += `<button class="btn big red" data-act="tab" data-tab="build">🏗️ Строить в городе «${p.name}»</button>`;
   else html += `<p class="muted">Чужой город (${owner.name}).</p><button class="btn big" data-act="dip-open" data-id="${owner.id}">🤝 Дипломатия с ${owner.name}</button>`;
 
   const nb = g.nbrs[p.id] || [];
@@ -149,25 +265,40 @@ export function buildHtml(g, p) {
   const s = g.states[g.playerState];
   const mineSel = p && p.owner === g.playerState;
   let html = head('Строительство', mineSel ? `${dot(s.color)}Выбран город «${p.name}»: ${p.buildings.length}/${slots(p)} мест` : `${dot(s.color)}Выбери здание, потом место на карте`);
+  html += questHtml(g);
   html += '<p class="muted">Нажми «Выбрать место», затем коснись карты на своей территории. Зелёный круг — можно строить.</p>';
   const mineCities = g.provs.filter((q) => q.owner === g.playerState);
   for (const type of BUILD_ORDER) {
     const d = BUILDINGS[type];
-    const afford = canAfford(s, costOf(type, 1));
+    const cost = costOf(type, 1);
+    const afford = canAfford(s, cost);
     const err = mineSel ? buildError(g, p, type) : null;
-    const spotCities = (d.needs ? mineCities.filter((q) => q.deposits[d.needs] && q.buildings.length < slots(q)) : mineCities.filter((q) => q.buildings.length < slots(q)).sort((a, b) => b.pop - a.pop)).slice(0, 5);
-    const noDep = d.needs && !mineCities.some((q) => q.deposits[d.needs]);
+    const free = (q) => q.buildings.length < slots(q);
+    let spotCities = mineCities.filter(free);
+    if (d.needs) spotCities = spotCities.filter((q) => q.deposits[d.needs]);
+    if (d.needsRiver) spotCities = spotCities.filter((q) => q.hasRiver);
+    spotCities = spotCities.sort((a, b) => b.pop - a.pop).slice(0, 5);
+    let why = '';
+    if (d.needs && !mineCities.some((q) => q.deposits[d.needs])) why = 'В вашей стране нет месторождения: ' + DEPOSITS[d.needs].name.toLowerCase();
+    else if (d.needsRiver && !mineCities.some((q) => q.hasRiver)) why = 'Нет города у реки';
+    else if (!mineCities.some(free)) why = 'Нет свободных мест: города должны вырасти';
+    else if (!afford) why = 'Не хватает: ' + Object.entries(cost).filter(([k, v]) => s[k] < v).map(([k, v]) => `${RES_ICON[k]}${fmt(v - s[k])}`).join(' ');
+    const fc = forecast(type, 1, mineSel ? p : (d.needs ? { deposits: { [d.needs]: 1 } } : null));
+    const fcTxt = fc.indirect ? 'польза косвенная: больше склад / торговля'
+      : fc.net > 0.05 ? `+${fc.net.toFixed(1)}💰/день · окупится за ~${Math.round(fc.payback)} дн.` : fc.net < -0.05 ? `${fc.net.toFixed(1)}💰/день: окупается косвенно` : 'окупаемость косвенная';
     html += `<div class="bcard">
-        <div class="bt"><span>${d.icon}</span><b>${d.name}</b></div>
-        <div class="bd">${d.desc}</div>
-        <div class="bd">Эффект (1 ур.): ${ratesText(type, 1)}</div>
-        <div class="bc">${costHtml(d.cost, s)} <span class="days">⏱ ${d.days} дн.</span></div>
-        ${d.needs ? `<div class="spots"><span class="${noDep ? 'err' : 'muted'}">${noDep ? 'В вашей стране нет месторождения' : 'Строить у месторождения:'}</span><div class="chips">${spotCities.map((q) => cityBtn(g, q)).join('')}</div></div>` : ''}
+        <div class="brow pv" style="border:0;background:none;padding:0;margin:0">${pvImg(type)}<div class="binfo"><div class="bt"><b>${d.name}</b></div>
+        <div class="bd">${d.desc}</div></div></div>
+        <div class="bd">В день (1 ур.): ${ratesText(type, 1)}</div>
+        <div class="bc">${costHtml(cost, s)} <span class="days">⏱ ${d.days} дн.</span></div>
+        <div class="fc">📈 Прогноз: <b>${fcTxt}</b></div>
+        ${d.needs || d.needsRiver ? `<div class="spots"><span class="muted">Где можно:</span><div class="chips">${spotCities.map((q) => cityBtn(g, q)).join('') || '<span class="err">нигде</span>'}</div></div>` : ''}
+        ${why ? `<div class="err">⛔ ${why}</div>` : ''}
         <div class="two">
-          <button class="btn" data-act="place" data-type="${type}" ${afford && !noDep ? '' : 'disabled'}>${afford ? '📍 Выбрать место' : 'Не хватает ресурсов'}</button>
+          <button class="btn" data-act="place" data-type="${type}" ${afford && !why ? '' : 'disabled'}>${afford ? '📍 Выбрать место' : 'Не хватает ресурсов'}</button>
           ${mineSel ? `<button class="btn ghost" data-act="build" data-type="${type}" ${err ? 'disabled' : ''} title="${err || ''}">⚡ Авто</button>` : ''}
         </div>
-        ${err && mineSel ? `<div class="err">${err} (авто)</div>` : ''}
+        ${err && mineSel && !why ? `<div class="err">Авто: ${err}</div>` : ''}
       </div>`;
   }
   return html;
@@ -213,7 +344,26 @@ export function prodHtml(g) {
   const s = g.states[g.playerState];
   const mine = g.provs.filter((p) => p.owner === g.playerState);
   const ep = Math.round(s.energy.ratio * 100);
-  let html = head('Производство', `${dot(s.color)}${s.name} · день ${g.day}`);
+  let html = head('Заводы', `${dot(s.color)}${s.name} · день ${g.day}`);
+
+  const rows = [];
+  for (const p of mine) p.buildings.forEach((b) => { if (BUILDINGS[b.type].produces || BUILDINGS[b.type].energy < 0 || b.type !== 'housing') rows.push({ p, b }); });
+  const score = ({ b }) => (b.buildLeft > 0 ? 1.5 : b.level === 0 ? 2 : Math.min(1, b.eff ?? 1) - (b.limit ? 0.5 : 0));
+  rows.sort((a, c) => score(a) - score(c));
+  const probs = rows.filter((r) => r.b.limit && r.b.buildLeft <= 0).length;
+  html += probs ? `<div class="tip bad">Простаивают: ${probs}. Проблемные здания — вверху списка.</div>` : '<div class="tip good">Все здания работают.</div>';
+  if (ep < 95) html += `<div class="tip bad">Дефицит энергии ${ep}%: всё производство и налоги замедлены.</div>`;
+  html += '<table class="ptab">';
+  for (const { p, b } of rows) {
+    const d = BUILDINGS[b.type];
+    const [sc, st] = bStatus(b);
+    const e = Math.min(1, b.eff ?? 0);
+    html += `<tr class="${sc === 'bad' ? 'prob' : ''}" data-act="pick-city" data-id="${p.id}" style="cursor:pointer">
+        <td>${d.icon}</td><td><b>${d.name}</b> ${lvSq(b.level)}<div class="fc">${p.name}</div></td>
+        <td style="width:34%"><div class="mini wide"><i style="width:${b.buildLeft > 0 ? 0 : Math.round(e * 100)}%" class="${e > 0.9 ? 'ok' : e > 0.5 ? 'mid' : 'bad'}"></i></div><div class="stline ${sc}">${st}${b.buildLeft > 0 ? '' : ' · ' + pct(e)}</div></td></tr>`;
+  }
+  html += '</table>';
+  if (!rows.length) html += '<p class="muted">Нет производственных зданий.</p>';
 
   html += '<h3>Ресурсы в день</h3><div class="restable">';
   for (const k of RES) {
@@ -225,36 +375,68 @@ export function prodHtml(g) {
     if (Math.abs(tr) > 0.05) html += `<div class="rsub">🤝 торговля: <b class="${tr >= 0 ? 'pos' : 'neg'}">${signed(tr)}</b> в день</div>`;
   }
   html += '</div>';
-
-  html += `<h3>Энергосеть</h3><div class="facts"><div><span>Выработка</span><b>${s.energy.supply.toFixed(0)}</b></div><div><span>Потребление</span><b>${s.energy.demand.toFixed(0)}</b></div></div>
-      <div class="bar"><div style="width:${Math.min(100, ep)}%" class="${ep >= 95 ? 'ok' : ep >= 60 ? 'mid' : 'bad'}"></div></div>`;
-  if (ep < 95) html += '<div class="tip bad">Дефицит энергии замедляет всё производство и налоги. Постройте электростанцию и держите запас топлива.</div>';
-  if (s.fuel < 40) html += '<div class="tip bad">Топливо почти закончилось: электростанции встанут. Постройте НПЗ у нефти или купите топливо у соседей (вкладка «Дипломатия»).</div>';
-
-  html += '<h3>Что работает</h3>';
-  const groups = BUILD_ORDER.filter((t) => t !== 'housing');
-  let any = false;
-  for (const t of groups) {
-    const rows = [];
-    for (const p of mine) p.buildings.forEach((b) => { if (b.type === t) rows.push([p, b]); });
-    if (!rows.length) continue;
-    any = true;
-    html += `<div class="pgroup"><div class="pg-h">${BUILDINGS[t].icon} ${BUILDINGS[t].name}</div>`;
-    for (const [p, b] of rows) {
-      const e = b.eff ?? 0;
-      html += `<button class="prow" data-act="pick-city" data-id="${p.id}"><span>${p.name}</span>
-          <span class="lv">${b.buildLeft > 0 ? '🚧 ' + b.buildLeft + ' дн.' : 'ур. ' + b.level}</span>
-          <span class="mini"><i style="width:${Math.round(Math.min(1, e) * 100)}%" class="${e > 0.9 ? 'ok' : e > 0.5 ? 'mid' : 'bad'}"></i></span><span class="pc">${b.buildLeft > 0 && b.level === 0 ? '—' : pct(e)}</span></button>`;
-    }
-    html += '</div>';
-  }
-  if (!any) html += '<p class="muted">Нет производственных зданий.</p>';
-
-  html += `<h3>Скоро</h3><div class="soon">
-      <div>📦 Склады и колонны снабжения <small>этап 2</small></div>
-      <div>🛠️ Заводы техники и армия <small>этапы 3–4</small></div>
-      <div>🚀 Ракеты, ПВО, дроны <small>этап 4</small></div></div>`;
   return html;
+}
+
+// ---- разбор ресурса по источникам (тап по чипу сверху) ----
+export function flowHtml(g, k) {
+  const s = g.states[g.playerState];
+  const mine = g.provs.filter((p) => p.owner === g.playerState);
+  const label = k === 'energy' ? 'Энергия' : RES_LABEL[k];
+  let html = head(`${k === 'energy' ? '⚡' : RES_ICON[k]} ${label}`, k === 'energy' ? 'Выработка и потребление' : `На складе ${fmt(s[k])} из ${fmt(s.cap)}`);
+  const src = {}, use = {};
+  for (const p of mine) for (const b of p.buildings) {
+    if (b.level <= 0) continue;
+    const d = BUILDINGS[b.type], e = Math.min(1, b.eff ?? 1);
+    let pr = 0, co = 0;
+    if (k === 'energy') { if (d.energy < 0) pr = -d.energy * b.level * e; else co = d.energy * b.level * (b.type === 'housing' ? 1 : 1); }
+    else { pr = (d.produces && d.produces[k] || 0) * b.level * e; co = (d.consumes && d.consumes[k] || 0) * b.level * e; }
+    if (pr) src[b.type] = (src[b.type] || 0) + pr;
+    if (co) use[b.type] = (use[b.type] || 0) + co;
+  }
+  const line = (name, v, cls) => `<div class="frow"><span>${name}</span><b class="${cls}">${cls === 'pos' ? '+' : '−'}${v.toFixed(1)}</b></div>`;
+  html += '<h3>Откуда</h3><div class="frows">' + (Object.entries(src).map(([t, v]) => line(BUILDINGS[t].icon + ' ' + BUILDINGS[t].name, v, 'pos')).join('') || '<p class="muted">Ничего не производится.</p>') + '</div>';
+  html += '<h3>Куда уходит</h3><div class="frows">';
+  html += Object.entries(use).map(([t, v]) => line(BUILDINGS[t].icon + ' ' + BUILDINGS[t].name, v, 'neg')).join('');
+  if (k === 'food') html += line('👥 Жители', s.foodNeed, 'neg');
+  html += '</div>';
+  const tr = s.trade ? s.trade[k] : 0;
+  if (k !== 'energy' && Math.abs(tr) > 0.05) html += `<div class="frow"><span>🤝 Договоры</span><b class="${tr >= 0 ? 'pos' : 'neg'}">${signed(tr)}</b></div>`;
+  if (k === 'energy') html += `<div class="facts"><div><span>Выработка</span><b>${s.energy.supply.toFixed(0)}</b></div><div><span>Потребление</span><b>${s.energy.demand.toFixed(0)}</b></div></div>`;
+  else html += `<div class="facts"><div><span>Итого за день</span><b class="${(s.rate[k] || 0) >= 0 ? 'pos' : 'neg'}">${signed(s.rate[k] || 0)}</b></div><div><span>Цена на рынке</span><b>${BASE_PRICE[k] ? marketSellPrice(k, s[k]).toFixed(2) + '💰' : '—'}</b></div></div>`;
+  return html;
+}
+
+// ---- бюджет и рынок ----
+export function budgetHtml(g) {
+  const s = g.states[g.playerState];
+  const b = s.budget;
+  let html = head('Бюджет', `${dot(s.color)}Итоги последнего дня · лимит торговли ${Math.floor(s.marketLeft)}/${s.mcap}`);
+  const inc = [['Налоги', b.tax], ['Продажа на рынке', b.sales], ['Сделки', Math.max(0, b.deals)]];
+  const exp = [['Содержание зданий', b.upkeep], ['Закупки', b.buy], ['Стройка', b.build], ['Сделки', Math.max(0, -b.deals)]];
+  const ti = inc.reduce((a, x) => a + x[1], 0), te = exp.reduce((a, x) => a + x[1], 0);
+  html += `<h3>Доходы <small class="pos">+${fmt(ti)}</small></h3><div class="frows">${inc.map(([n, v]) => `<div class="frow"><span>${n}</span><b class="pos">+${fmt(v)}</b></div>`).join('')}</div>`;
+  html += `<h3>Расходы <small class="neg">−${fmt(te)}</small></h3><div class="frows">${exp.map(([n, v]) => `<div class="frow"><span>${n}</span><b class="neg">−${fmt(v)}</b></div>`).join('')}</div>`;
+  html += `<div class="facts"><div><span>Итого за день</span><b class="${ti - te >= 0 ? 'pos' : 'neg'}">${signed(ti - te)}💰</b></div><div><span>В казне</span><b>${fmt(s.money)}💰</b></div></div>`;
+  if (s.debt) html += '<div class="tip bad">Казна пуста: расходы больше доходов. Продайте излишки или сократите стройку.</div>';
+
+  html += '<h3>Мировой рынок</h3><p class="muted">Цена продажи падает, когда на складе больше целевого запаса. Купить дороже, чем продать.</p>';
+  for (const k of TRADE_RES) {
+    const sell = marketSellPrice(k, s[k]) * ((STATES_DEF[s.id] && STATES_DEF[s.id].bonus && STATES_DEF[s.id].bonus.sell) || 1), buy = marketBuyPrice(k, s[k]);
+    const tgt = STOCK_TARGET[k];
+    const surplus = s[k] > tgt, lack = s[k] < tgt;
+    const auto = s.auto[k];
+    html += `<div class="mkt"><div class="mt">${RES_ICON[k]} ${RES_LABEL[k]} <span class="fc">${fmt(s[k])} / цель ${fmt(tgt)}</span></div>
+        <div class="mp">продать ${sell.toFixed(2)} · купить ${buy.toFixed(2)}</div>
+        <div class="two"><button class="btn small" data-act="m-sell" data-k="${k}" ${surplus ? '' : 'disabled'}>Продать излишки</button><button class="btn small" data-act="m-buy" data-k="${k}" ${lack ? '' : 'disabled'}>Докупить</button></div>
+        <label class="auto"><input type="checkbox" data-auto-on="${k}" ${auto != null ? 'checked' : ''}> Авто-продажа выше <b data-auto-v="${k}">${auto != null ? fmt(auto) : '—'}</b>
+        <input type="range" data-auto="${k}" min="0" max="${Math.round(s.cap)}" step="${Math.max(1, Math.round(s.cap / 100))}" value="${auto != null ? Math.round(auto) : Math.round(tgt * 1.5)}" ${auto != null ? '' : 'disabled'}></label></div>`;
+  }
+  return html;
+}
+
+export function goalsHtml(g) {
+  return '<h3>Цели</h3><div>' + QUESTS.map((q) => { const d = g.quests.done.includes(q.id); return `<div class="goal ${d ? 'done' : ''}"><span>${d ? '✅' : '⬜'}</span><span>${q.text} <small class="muted">+${q.reward}💰</small></span></div>`; }).join('') + '</div>';
 }
 
 export function stateHtml(g) {
@@ -266,6 +448,7 @@ export function stateHtml(g) {
   for (const p of mine) for (const b of p.buildings) if (b.level > 0) counts[b.type] = (counts[b.type] || 0) + b.level;
 
   let html = head(s.name, `${dot(s.color)}Страна · день ${g.day}`);
+  html += goalsHtml(g);
   html += `<div class="facts">
       <div><span>Города</span><b>${mine.length}</b></div>
       <div><span>Население</span><b>${fmt(pop)}</b></div>
@@ -308,7 +491,7 @@ export function cardHtml(g, p) {
     <div class="card-btns"><button class="btn small" data-act="tab" data-tab="city">Подробно</button>${mine ? '<button class="btn small ghost" data-act="tab" data-tab="build">Каталог</button>' : ''}</div>`;
 }
 
-export function startHtml(hasSave) {
+export function startHtml(hasSave, diff = 'normal') {
   const cards = STATES_DEF.map((s) => `
     <button class="scard" data-act="pick" data-id="${s.id}" style="--c:${s.color}">
       <div class="sname">${s.name}</div><div class="sdesc">${s.desc}</div>
@@ -317,6 +500,8 @@ export function startHtml(hasSave) {
       <h1>ЖЕЛЕЗНЫЙ<br>МЕРИДИАН</h1>
       <p class="muted">Стратегия: экономика, логистика, ракеты, армии. Сейчас: карта, города и экономика.</p>
       ${hasSave ? '<button class="btn big" data-act="continue">▶ Продолжить игру</button>' : ''}
+      <h3>Сложность ботов</h3>
+      <div class="seg">${[['easy', 'Лёгкая'], ['normal', 'Обычная'], ['hard', 'Трудная']].map(([v, n]) => `<button class="${diff === v ? 'on' : ''}" data-act="diff" data-val="${v}">${n}</button>`).join('')}</div>
       <h3>Новая игра: выбери государство</h3>
       <div class="scards">${cards}</div>
     </div>`;

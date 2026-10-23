@@ -361,6 +361,9 @@ export class MapView {
     this.dummy = new THREE.Object3D();
     this.pinMode = null;
     this.t0 = 0;
+    this.dprCap = 2;
+    this.layers = { deposits: false, borders: true, energy: false, unemp: false };
+    this.labelExtra = null;
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x0e345c);
@@ -436,7 +439,9 @@ export class MapView {
     this.smoke = provs.map(() => []);
     this.buildCars();
     this.buildLabels();
+    this.heat = null; this.heatMeshes = [];
     this.sync();
+    this.setLayers({});
 
     this.fit();
     this.select(-1);
@@ -1002,6 +1007,58 @@ export class MapView {
 
   setPins(mode) { this.pinMode = mode; this.dirty = true; }
 
+  // слои карты: месторождения, границы, энергия/занятость над городами, тепловая карта безработицы
+  setLayers(l) {
+    Object.assign(this.layers, l);
+    if (this.borderGroup) this.borderGroup.visible = !!this.layers.borders;
+    this.updateHeat();
+    this.dirty = true;
+  }
+
+  updateHeat() {
+    if (!this.g || !this.root) return;
+    if (!this.heat) { this.heat = new THREE.Group(); this.heat.visible = false; this.root.add(this.heat); this.heatMeshes = []; }
+    this.heat.visible = !!this.layers.unemp;
+    if (!this.layers.unemp) return;
+    if (!this.heatMeshes.length) {
+      const geo = new THREE.CylinderGeometry(1, 1, 0.1, 28);
+      for (const p of this.g.provs) {
+        const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x7bd36b, transparent: true, opacity: 0.45, depthWrite: false }));
+        m.position.set(p.x, surfaceY(this.wd, p.x, p.z) + 0.5, p.z);
+        this.heat.add(m); this.heatMeshes.push(m);
+      }
+    }
+    const c = new THREE.Color();
+    this.g.provs.forEach((p, i) => {
+      const un = this.unempOf ? this.unempOf(p) : 0;
+      c.setHSL((1 - Math.min(1, un * 1.6)) * 0.33, 0.85, 0.5);
+      this.heatMeshes[i].material.color.copy(c);
+      this.heatMeshes[i].scale.set(2 + Math.sqrt(p.pop) / 30, 1, 2 + Math.sqrt(p.pop) / 30);
+    });
+  }
+
+  zoomBy(f) {
+    this.cam.dist = this.cam.dist * f;
+    this.clampCam();
+    this.dirty = true;
+  }
+
+  setQuality(q) {
+    this.quality = q;
+    this.dprCap = q === 'low' ? 1 : q === 'medium' ? 1.5 : 2;
+    this.resize();
+  }
+
+  // углы видимого окна на земле (для миникарты)
+  viewCorners() {
+    const pts = [];
+    for (const [x, y] of [[0, 0], [this.w, 0], [this.w, this.h], [0, this.h]]) {
+      const v = this.groundAt(x, y);
+      if (v) pts.push([v.x, v.z]);
+    }
+    return pts;
+  }
+
   // ---- подписи городов (HTML поверх карты) ----
   buildLabels() {
     if (!this.labelsEl) { this.labels = null; this.pins = null; return; }
@@ -1045,7 +1102,8 @@ export class MapView {
       }
       if (vis !== L.vis) { L.vis = vis; L.el.style.display = vis ? '' : 'none'; }
       if (!vis) continue;
-      const text = `${p.capital ? '★ ' : ''}${p.name}${close ? ' · ' + Math.round(p.pop / 100) / 10 + 'k' : ''}`;
+      const extra = this.labelExtra && p.owner === playerState ? this.labelExtra(p) : '';
+      const text = `${p.capital ? '★ ' : ''}${p.name}${close ? ' · ' + Math.round(p.pop / 100) / 10 + 'k' : ''}${extra}`;
       const cls = 'clabel' + (p.id === this.sel ? ' sel' : '') + (p.owner === playerState ? ' mine' : '');
       if (L.text !== text + cls) {
         L.text = text + cls; L.el.textContent = text; L.el.className = cls; L.el.style.setProperty('--c', states[p.owner].color);
@@ -1132,7 +1190,7 @@ export class MapView {
     this.w = Math.max(1, Math.floor(r.width));
     this.h = Math.max(1, Math.floor(r.height));
     if (this.renderer) {
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.dprCap || 2));
       this.renderer.setSize(this.w, this.h, false);
     }
     this.dirty = true;
@@ -1236,6 +1294,7 @@ export class MapView {
     this.animating = !this.headless && this.cam.dist < this.fitDist * 0.62;
     if (this.animating || !this.animStarted) { this.animStarted = true; this.updateCars(this.animating ? now : this.lastAnim || 0); if (this.animating) this.lastAnim = now; }
     this.updateCamera();
+    if (this.layers.unemp && this.heat && this.heat.visible && !this.heatTick) { this.heatTick = true; this.updateHeat(); setTimeout(() => { this.heatTick = false; }, 800); }
     this.updateLabels();
     if (this.renderer) this.renderer.render(this.scene, this.camera);
     this.dirty = this.animating;

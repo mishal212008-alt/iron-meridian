@@ -3,11 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-  <meta name="theme-color" content="#0a1016">
+  <meta name="theme-color" content="#14160f">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/theme.css">
   <link rel="stylesheet" href="css/style.css">
   <title>Железный Меридиан</title>
 </head>
@@ -21,31 +22,42 @@
           <button data-speed="0" aria-label="Пауза">⏸</button>
           <button data-speed="1" aria-label="Скорость 1">▶</button>
           <button data-speed="2" aria-label="Скорость 2">⏩</button>
-          <button data-speed="3" aria-label="Скорость 4">⏭</button>
+          <button data-speed="3" aria-label="Скорость 3">⏭</button>
         </div>
+        <button id="gear" class="iconbtn" data-act="menu" aria-label="Настройки">⚙️</button>
       </div>
       <div id="resbar"></div>
+      <div id="alerts"></div>
     </header>
     <div id="main">
       <div id="mapwrap">
         <canvas id="map"></canvas>
         <div id="labels"></div>
         <div id="toasts"></div>
+        <div id="fps" class="hidden"></div>
+        <div id="mapctl">
+          <button class="iconbtn" data-act="zoom-in" aria-label="Приблизить">＋</button>
+          <button class="iconbtn" data-act="zoom-out" aria-label="Отдалить">－</button>
+          <button class="iconbtn" data-act="home" aria-label="К столице">🏠</button>
+          <button class="iconbtn" data-act="layers" aria-label="Слои карты">👁</button>
+          <div id="layerbox" class="hidden"></div>
+        </div>
+        <canvas id="minimap" width="160" height="160" aria-label="Миникарта"></canvas>
         <div id="card" class="hidden"></div>
         <div id="placebar" class="hidden"></div>
       </div>
       <aside id="panel" class="hidden"><div id="grab" aria-label="Потяни, чтобы изменить размер"><i></i></div><div id="pbody"></div></aside>
-      <nav id="rail">
-        <button data-act="tab" data-tab="city"><span class="ni">🏙️</span><span>Город</span></button>
-        <button data-act="tab" data-tab="build"><span class="ni">🏗️</span><span>Строить</span></button>
-        <button data-act="tab" data-tab="prod"><span class="ni">🏭</span><span>Заводы</span></button>
-        <button data-act="tab" data-tab="res"><span class="ni">🧭</span><span>Ресурсы</span></button>
-        <button data-act="tab" data-tab="dip"><span class="ni">🤝</span><span>Дипл.</span><b id="dip-badge" class="badge hidden"></b></button>
-        <button data-act="tab" data-tab="state"><span class="ni">📊</span><span>Страна</span></button>
-        <button data-act="fit"><span class="ni">🗺️</span><span>Карта</span></button>
-        <button data-act="menu"><span class="ni">⚙️</span><span>Меню</span></button>
-      </nav>
     </div>
+    <div id="ribbon"></div>
+    <nav id="dock">
+      <button data-act="tab" data-tab="city"><span class="ni">🏙️</span><span class="nl">Город</span><kbd>1</kbd></button>
+      <button data-act="tab" data-tab="prod"><span class="ni">🏭</span><span class="nl">Заводы</span><kbd>2</kbd></button>
+      <button data-act="tab" data-tab="res"><span class="ni">🧭</span><span class="nl">Ресурсы</span><kbd>3</kbd></button>
+      <button data-act="tab" data-tab="budget"><span class="ni">💰</span><span class="nl">Бюджет</span><kbd>4</kbd></button>
+      <button data-act="tab" data-tab="dip"><span class="ni">🤝</span><span class="nl">Дипл.</span><kbd>5</kbd><b id="dip-badge" class="badge hidden"></b></button>
+      <button data-act="tab" data-tab="state"><span class="ni">📊</span><span class="nl">Страна</span><kbd>6</kbd></button>
+      <button id="mainact" class="mainact" data-act="tab" data-tab="build"><span class="ni">🏗️</span><span class="nl">Строить</span><kbd>7</kbd></button>
+    </nav>
   </div>
 
   <div id="start" class="overlay"></div>
@@ -61,7 +73,9 @@
   <div id="menu" class="overlay hidden">
     <div class="menu-box">
       <h2>Меню</h2>
+      <div id="settings"></div>
       <button class="btn big" data-act="save">💾 Сохранить</button>
+      <button class="btn big ghost" data-act="goals">🎯 Цели</button>
       <button class="btn big ghost" data-act="new">🆕 Новая игра</button>
       <button class="btn big ghost" data-act="menu-close">Закрыть</button>
       <p id="menu-ver" class="muted"></p>
