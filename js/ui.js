@@ -108,6 +108,57 @@ export function sheetHtml(g, p) {
   return html;
 }
 
+export function econHtml(g) {
+  const s = g.states[g.playerState];
+  const mine = g.provs.filter((p) => p.owner === g.playerState);
+  const pop = mine.reduce((a, p) => a + p.pop, 0);
+  const jobs = mine.reduce((a, p) => a + Math.min(p.pop * ECON.workerShare, jobsOf(p)), 0);
+  const counts = {};
+  for (const p of mine) for (const b of p.buildings) if (b.level > 0) counts[b.type] = (counts[b.type] || 0) + b.level;
+  const ep = Math.round(s.energy.ratio * 100);
+
+  let html = `<div class="sheet-head"><div>
+      <h2>Экономика</h2>
+      <div class="sub"><span class="dot" style="background:${s.color}"></span>${s.name} · день ${g.day}</div>
+    </div><button class="x" data-act="close" aria-label="Закрыть">✕</button></div>`;
+
+  html += '<h3>Ресурсы</h3><div class="facts">';
+  for (const k of RES) {
+    const r = s.rate[k] || 0;
+    const cls = r > 0.05 ? 'pos' : r < -0.05 ? 'neg' : '';
+    html += `<div><span>${RES_ICON[k]} ${RES_LABEL[k]}</span><b>${fmt(s[k])} <i class="${cls}">${signed(r)}/день</i></b></div>`;
+  }
+  html += '</div>';
+
+  html += `<h3>Энергосеть</h3><div class="facts">
+      <div><span>Выработка</span><b>${s.energy.supply.toFixed(0)}</b></div>
+      <div><span>Потребление</span><b>${s.energy.demand.toFixed(0)}</b></div>
+    </div>
+    <div class="bar"><div style="width:${Math.min(100, ep)}%" class="${ep >= 95 ? 'ok' : ep >= 60 ? 'mid' : 'bad'}"></div></div>
+    <p class="muted">${ep >= 95 ? 'Энергии хватает.' : 'Дефицит энергии замедляет производство и налоги. Постройте электростанцию и следите за топливом.'}</p>`;
+
+  html += `<h3>Государство</h3><div class="facts">
+      <div><span>Провинции</span><b>${mine.length}</b></div>
+      <div><span>Население</span><b>${fmt(pop)}</b></div>
+      <div><span>Занято</span><b>${fmt(jobs)}</b></div>
+      <div><span>Безработные</span><b>${fmt(Math.max(0, pop * ECON.workerShare - jobs))}</b></div>
+    </div>`;
+
+  html += '<h3>Здания (уровни)</h3><div class="facts">';
+  for (const t of BUILD_ORDER) html += `<div><span>${BUILDINGS[t].icon} ${BUILDINGS[t].name}</span><b>${counts[t] || 0}</b></div>`;
+  html += '</div>';
+
+  html += '<h3>Государства</h3>';
+  for (const st of g.states) {
+    const ps = g.provs.filter((p) => p.owner === st.id);
+    const bn = ps.reduce((a, p) => a + p.buildings.filter((b) => b.level > 0).length, 0);
+    html += `<div class="brow"><div class="bicon"><span class="dot big" style="background:${st.color}"></span></div>
+        <div class="binfo"><b>${st.name}</b>${st.id === g.playerState ? ' <span class="lv">вы</span>' : ''}
+        <div class="tag">${ps.length} пров. · ${fmt(ps.reduce((a, p) => a + p.pop, 0))} чел. · ${bn} зданий</div></div></div>`;
+  }
+  return html;
+}
+
 export function startHtml(hasSave) {
   const cards = STATES_DEF.map((s) => `
     <button class="scard" data-act="pick" data-id="${s.id}" style="--c:${s.color}">

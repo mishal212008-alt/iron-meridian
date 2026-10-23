@@ -1,6 +1,6 @@
 // Данные игры «Железный Меридиан». Всё, что можно настраивать, лежит здесь.
 
-export const VERSION = '0.1.0 (этап 1)';
+export const VERSION = '0.2.0 (этап 1, 3D)';
 
 export const MAP = { cols: 10, rows: 12 };
 

@@ -1,18 +1,32 @@
-import { SPEEDS, VERSION, STATES_DEF } from './data.js';
+import { SPEEDS, VERSION } from './data.js';
 import {
   SAVE_KEY, deserialize, demolish, newGame, serialize, startBuild, startUpgrade, tick,
 } from './sim.js';
 import { MapView } from './render.js';
-import { resbarHtml, sheetHtml, startHtml } from './ui.js';
+import { econHtml, resbarHtml, sheetHtml, startHtml } from './ui.js';
 
 const $ = (id) => document.getElementById(id);
 let game = null;
 let view = null;
 let selected = -1;
+let panel = null; // 'prov' | 'econ' | null
 let speedIdx = 1;
 let acc = 0;
 let last = 0;
 let looping = false;
+
+const SH_KEY = 'iron-meridian-shadows';
+function shadowsWanted() {
+  try {
+    const v = localStorage.getItem(SH_KEY);
+    if (v !== null) return v === '1';
+  } catch { /* нет доступа к хранилищу */ }
+  return !/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || ''); // на телефонах по умолчанию без теней
+}
+function setShadowsLabel() {
+  const on = view ? view.shadows : shadowsWanted();
+  $('btn-shadows').textContent = '🌓 Тени: ' + (on ? 'вкл' : 'выкл');
+}
 
 function hasSave() {
   try { return !!localStorage.getItem(SAVE_KEY); } catch { return false; }
@@ -32,19 +46,19 @@ function begin() {
   $('start').classList.add('hidden');
   $('menu').classList.add('hidden');
   if (!view) {
-    view = new MapView($('map'), game);
+    view = new MapView($('map'), game, { shadows: shadowsWanted() });
+    if (view.webglError) toast('3D недоступно на этом устройстве (нет WebGL). Игра работает без картинки.');
   } else {
-    view.g = game;
-    view.cell.clear();
-    for (const p of game.provs) view.cell.set(p.row * game.cols + p.col, p);
+    view.setGame(game);
     view.resize();
     view.fit();
   }
-  view.onSelect = (id) => { select(id); };
+  view.onSelect = (id) => select(id);
   selected = -1;
-  view.sel = -1;
+  panel = null;
   speedIdx = 1;
-  refreshAll();
+  setShadowsLabel();
+  refreshTop();
   const cap = game.provs[game.states[game.playerState].capital];
   select(cap.id, true);
   if (!looping) { looping = true; requestAnimationFrame(loop); }
@@ -52,9 +66,9 @@ function begin() {
 
 function select(id, focus = false) {
   selected = id;
-  view.sel = id;
+  view.select(id);
+  panel = id >= 0 ? 'prov' : null;
   if (focus && id >= 0) view.focus(game.provs[id]);
-  view.dirty = true;
   refreshSheet();
 }
 
@@ -71,14 +85,22 @@ function refreshTop() {
 
 function refreshSheet() {
   const el = $('sheet');
-  if (selected < 0) { el.classList.add('hidden'); return; }
-  const top = el.scrollTop;
-  el.innerHTML = sheetHtml(game, game.provs[selected]);
-  el.classList.remove('hidden');
-  el.scrollTop = top;
+  if (panel === 'prov' && selected >= 0) {
+    const top = el.scrollTop;
+    el.innerHTML = sheetHtml(game, game.provs[selected]);
+    el.classList.remove('hidden');
+    el.scrollTop = top;
+  } else if (panel === 'econ') {
+    const top = el.scrollTop;
+    el.innerHTML = econHtml(game);
+    el.classList.remove('hidden');
+    el.scrollTop = top;
+  } else {
+    el.classList.add('hidden');
+  }
 }
 
-function refreshAll() { refreshTop(); refreshSheet(); }
+function refreshAll() { refreshTop(); refreshSheet(); if (view) view.dirty = true; }
 
 function toast(text) {
   const t = document.createElement('div');
@@ -94,7 +116,7 @@ function advanceDay() {
   for (const e of game.events.splice(0)) toast(e);
   if (game.day % 10 === 0) save();
   refreshTop();
-  if (selected >= 0) refreshSheet();
+  if (panel) refreshSheet();
   view.dirty = true;
 }
 
@@ -124,7 +146,13 @@ document.addEventListener('click', (e) => {
   } else if (act === 'continue') {
     try { game = deserialize(localStorage.getItem(SAVE_KEY)); begin(); } catch { toast('Не удалось загрузить сохранение'); }
   } else if (act === 'close') {
-    select(-1);
+    if (panel === 'econ') { panel = selected >= 0 ? null : null; refreshSheet(); } else select(-1);
+  } else if (act === 'nav-prov') {
+    if (selected < 0) toast('Коснись провинции на карте');
+    else { panel = panel === 'prov' ? null : 'prov'; refreshSheet(); }
+  } else if (act === 'nav-econ') {
+    panel = panel === 'econ' ? null : 'econ';
+    refreshSheet();
   } else if (act === 'build' && selected >= 0) {
     const err = startBuild(game, game.provs[selected], el.dataset.type);
     if (err) toast(err);
@@ -140,16 +168,23 @@ document.addEventListener('click', (e) => {
     }
   } else if (act === 'menu') {
     $('menu-ver').textContent = 'Версия ' + VERSION;
+    setShadowsLabel();
     $('menu').classList.remove('hidden');
   } else if (act === 'menu-close') {
     $('menu').classList.add('hidden');
   } else if (act === 'save') {
     toast(save() ? 'Игра сохранена' : 'Не удалось сохранить');
     $('menu').classList.add('hidden');
+  } else if (act === 'shadows') {
+    if (view) {
+      view.setShadows(!view.shadows);
+      try { localStorage.setItem(SH_KEY, view.shadows ? '1' : '0'); } catch { /* ничего */ }
+      setShadowsLabel();
+    }
   } else if (act === 'new') {
     if (confirm('Начать новую игру? Несохранённый прогресс пропадёт.')) { showStart(); }
   } else if (act === 'fit') {
-    view.fit();
+    if (view) view.fit();
   }
 });
 
@@ -163,7 +198,7 @@ $('speeds').addEventListener('click', (e) => {
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space' && game) { e.preventDefault(); speedIdx = speedIdx === 0 ? 1 : 0; refreshTop(); }
 });
-window.addEventListener('resize', () => { if (view) { view.resize(); } });
+window.addEventListener('resize', () => { if (view) view.resize(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) save(); });
 
 showStart();
