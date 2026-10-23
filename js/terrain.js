@@ -1,6 +1,6 @@
 // Рисование земли в текстуру: вода, берег, трава, леса, горы, снег, поля, реки, дороги,
 // границы государств. Работает без DOM: результат — массив RGBA, из него делается текстура.
-import { CELL, WORLD, gridSample, smoothstep, territoryAt } from './world.js';
+import { CELL, WORLD, gridSample, mulberry32, smoothstep, territoryAt } from './world.js';
 
 const { N, HALF, SZ } = WORLD;
 export const TEX = 1024;
@@ -142,14 +142,45 @@ export function paintTerrain(world, stateColors, tex = TEX) {
       }
     }
   };
-  for (const pass of [[2.3, C.roadEdge, 0.55], [1.5, C.road, 0.9]]) {
-    for (const rd of roads) {
-      for (let i = 0; i < rd.pts.length - 1; i++) {
-        const [ax, az] = rd.pts[i], [bx, bz] = rd.pts[i + 1];
-        const len = Math.hypot(bx - ax, bz - az), steps = Math.max(1, Math.ceil(len / 0.06));
-        for (let s = 0; s <= steps; s++) stamp(ax + ((bx - ax) * s) / steps, az + ((bz - az) * s) / steps, pass[0], pass[1], pass[2] * 0.35);
+  // месторождения: пятна руды и нефти прямо на земле
+  const rng = mulberry32(world.seed ^ 0x5eed);
+  for (const p of provs) {
+    const d = p.depositPos || {};
+    if (p.deposits.steel && d.steel) {
+      const R = p.deposits.steel > 1 ? 1.3 : 0.95;
+      for (let k = 0; k < 9; k++) {
+        const a = rng() * 6.28, r = rng() * R * 0.8;
+        stamp(d.steel[0] + Math.cos(a) * r, d.steel[1] + Math.sin(a) * r, (0.3 + rng() * 0.35) * (tex / SZ), k % 3 === 0 ? [186, 120, 62] : [96, 88, 82], 0.8);
       }
     }
+    if (p.deposits.oil && d.oil) {
+      const R = p.deposits.oil > 1 ? 1.3 : 0.95;
+      for (let k = 0; k < 7; k++) {
+        const a = rng() * 6.28, r = rng() * R * 0.8;
+        stamp(d.oil[0] + Math.cos(a) * r, d.oil[1] + Math.sin(a) * r, (0.25 + rng() * 0.4) * (tex / SZ), [26, 26, 32], 0.88);
+      }
+    }
+  }
+  return px;
+}
+
+// мелкая повторяющаяся текстура-«шум»: накладывается на землю, чтобы вблизи не было мыла
+export function makeDetail(size = 128) {
+  const rng = mulberry32(777);
+  const lat = (k) => { const a = new Float32Array(k * k); for (let i = 0; i < a.length; i++) a[i] = rng(); return a; };
+  const L1 = lat(32), L2 = lat(8), L3 = lat(64);
+  const at = (a, k, x, y) => a[((y % k) + k) % k * k + (((x % k) + k) % k)];
+  const val = (a, k, u, v) => {
+    const x = u * k, y = v * k, xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
+    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+    return (at(a, k, xi, yi) * (1 - sx) + at(a, k, xi + 1, yi) * sx) * (1 - sy) + (at(a, k, xi, yi + 1) * (1 - sx) + at(a, k, xi + 1, yi + 1) * sx) * sy;
+  };
+  const px = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const u = x / size, v = y / size, o = (y * size + x) * 4;
+    px[o] = Math.round(255 * (0.6 * val(L1, 32, u, v) + 0.4 * val(L3, 64, u, v)));
+    px[o + 1] = Math.round(255 * val(L2, 8, u, v));
+    px[o + 2] = 128; px[o + 3] = 255;
   }
   return px;
 }

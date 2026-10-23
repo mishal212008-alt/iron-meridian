@@ -1,9 +1,11 @@
 import { SPEEDS, VERSION } from './data.js';
 import {
-  SAVE_KEY, deserialize, demolish, newGame, serialize, startBuild, startUpgrade, tick,
+  SAVE_KEY, canAfford, costOf, deserialize, demolish, newGame, plotError, serialize, startBuild, startUpgrade, tick,
 } from './sim.js';
 import { MapView } from './render.js';
-import { TABS, buildHtml, cardHtml, cityHtml, prodHtml, resbarHtml, stateHtml, startHtml } from './ui.js';
+import { slots } from './sim.js';
+import { BUILDINGS, RES_ICON } from './data.js';
+import { buildHtml, cardHtml, cityHtml, fmt, prodHtml, resHtml, resbarHtml, stateHtml, startHtml } from './ui.js';
 
 const $ = (id) => document.getElementById(id);
 let game = null;
@@ -16,6 +18,7 @@ let last = 0;
 let looping = false;
 let panelDirty = false;
 let panelAt = 0;
+let placing = null; // { type, x, z, pid, err }
 
 const wide = () => !!(window.matchMedia && window.matchMedia('(min-width: 900px)').matches);
 
@@ -45,7 +48,8 @@ function begin() {
     view.resize();
     view.fit();
   }
-  view.onSelect = (id) => select(id);
+  view.onTap = onTap;
+  placing = null;
   selected = -1;
   tab = null;
   speedIdx = 1;
@@ -55,13 +59,66 @@ function begin() {
   if (!looping) { looping = true; requestAnimationFrame(loop); }
 }
 
+function onTap(hit) {
+  if (placing) { placeAt(hit); return; }
+  select(hit ? hit.id : -1);
+}
+
+function placeBarHtml() {
+  const d = BUILDINGS[placing.type];
+  const s = game.states[game.playerState];
+  const cost = costOf(placing.type, 1);
+  const costTxt = Object.entries(cost).map(([k, v]) => `<span class="cost${s[k] < v ? ' lack' : ''}">${RES_ICON[k]}${fmt(v)}</span>`).join('');
+  const has = placing.x !== null;
+  const okp = has && !placing.err;
+  const msg = !has ? placing.err : okp ? 'Место подходит' : placing.err;
+  return `<div class="pb-t">${d.icon} <b>${d.name}</b> ${costTxt}</div>
+    <div class="pb-s ${okp ? 'ok2' : has ? 'bad2' : 'muted'}">${msg}</div>
+    <div class="two"><button class="btn" data-act="place-ok" ${okp && canAfford(s, cost) ? '' : 'disabled'}>✓ Построить здесь</button><button class="btn ghost" data-act="place-cancel">✕ Отмена</button></div>`;
+}
+
+function startPlacing(type, focusAt) {
+  tab = null;
+  placing = { type, x: null, z: null, pid: -1, err: 'Коснись карты на своей территории' };
+  if (view) {
+    view.setPins(type === 'mine' ? 'steel' : type === 'refinery' ? 'oil' : null);
+    view.setGhost(null);
+    if (focusAt) view.focusAt(focusAt[0], focusAt[1], Math.max(14, view.fitDist * 0.25));
+    else {
+      const cap = game.provs[selected >= 0 && game.provs[selected].owner === game.playerState ? selected : game.states[game.playerState].capital];
+      view.focus(cap, 0.35);
+    }
+  }
+  refreshPanel();
+}
+
+function stopPlacing() {
+  placing = null;
+  if (view) { view.setGhost(null); view.setPins(tab === 'res' ? 'all' : null); }
+  refreshPanel();
+}
+
+function placeAt(hit) {
+  if (!hit || !hit.land) { placing.err = 'Здесь море'; placing.x = null; view.setGhost(null); }
+  else {
+    const p = game.provs[hit.id];
+    placing.x = Math.round(hit.x * 100) / 100; placing.z = Math.round(hit.z * 100) / 100; placing.pid = p.id;
+    placing.err = p.owner !== game.playerState ? 'Чужая территория' : plotError(game, p, placing.type, hit.x, hit.z);
+    if (!placing.err && p.buildings.length >= 99) placing.err = 'Нет мест';
+    if (!placing.err && p.owner === game.playerState && p.buildings.length >= slotsOf(p)) placing.err = 'В этом городе нет свободных мест (город должен вырасти)';
+    view.setGhost(placing.type, placing.x, placing.z, !placing.err);
+  }
+  refreshPanel();
+}
+const slotsOf = (p) => slots(p);
+
 function select(id, focus = false) {
   selected = id;
   view.select(id);
   if (id >= 0) {
     if (focus) view.focus(game.provs[id]);
     if (tab === null && wide()) tab = 'city';
-    if (tab === 'prod' || tab === 'state') tab = 'city';
+    if (tab === 'prod' || tab === 'state' || tab === 'res') tab = 'city';
   }
   refreshPanel();
 }
@@ -88,16 +145,19 @@ function refreshPanel() {
     const top = el.scrollTop;
     const html = tab === 'city' ? cityHtml(game, p)
       : tab === 'build' ? buildHtml(game, p)
-        : tab === 'prod' ? prodHtml(game) : stateHtml(game);
+        : tab === 'prod' ? prodHtml(game) : tab === 'res' ? resHtml(game) : stateHtml(game);
     el.innerHTML = html;
     el.classList.remove('hidden');
     el.scrollTop = top;
   } else {
     el.classList.add('hidden');
   }
+  if (view && !placing) view.setPins(tab === 'res' ? 'all' : null);
+  const pb = $('placebar');
+  if (placing) { pb.innerHTML = placeBarHtml(); pb.classList.remove('hidden'); } else pb.classList.add('hidden');
   // карточка выбранного города: пока панель закрыта
   const card = $('card');
-  if (p && !tab) { card.innerHTML = cardHtml(game, p); card.classList.remove('hidden'); } else card.classList.add('hidden');
+  if (p && !tab && !placing) { card.innerHTML = cardHtml(game, p); card.classList.remove('hidden'); } else card.classList.add('hidden');
 }
 
 function refreshAll() { refreshTop(); refreshPanel(); if (view) view.dirty = true; }
@@ -148,14 +208,28 @@ document.addEventListener('click', (e) => {
   } else if (act === 'continue') {
     try { game = deserialize(localStorage.getItem(SAVE_KEY)); begin(); } catch { toast('Не удалось загрузить сохранение'); }
   } else if (act === 'tab') {
+    if (placing) stopPlacing();
     tab = tab === el.dataset.tab ? null : el.dataset.tab;
     refreshPanel();
+  } else if (act === 'place') {
+    startPlacing(el.dataset.type, el.dataset.x ? [Number(el.dataset.x), Number(el.dataset.z)] : null);
+  } else if (act === 'place-cancel') {
+    stopPlacing();
+  } else if (act === 'place-ok' && placing && placing.x !== null) {
+    const p = game.provs[placing.pid];
+    const err = startBuild(game, p, placing.type, { x: placing.x, z: placing.z });
+    if (err) toast(err);
+    else { toast(`🚧 ${BUILDINGS[placing.type].name}: стройка началась (${p.name})`); stopPlacing(); select(p.id); }
+    refreshAll();
+  } else if (act === 'look') {
+    if (view) view.focusAt(Number(el.dataset.x), Number(el.dataset.z), Math.max(14, view.fitDist * 0.25));
   } else if (act === 'close') {
     tab = null;
     refreshPanel();
   } else if (act === 'card-close') {
     select(-1);
   } else if (act === 'pick-city') {
+    if (placing) stopPlacing();
     select(Number(el.dataset.id), true);
   } else if (act === 'build' && prov) {
     const err = startBuild(game, prov, el.dataset.type);

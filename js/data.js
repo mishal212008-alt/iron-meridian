@@ -1,6 +1,6 @@
 // Данные игры «Железный Меридиан». Всё, что можно настраивать, лежит здесь.
 
-export const VERSION = '0.3.0 (этап 1: цельная карта, боковая панель)';
+export const VERSION = '0.4.0 (города с улицами, выбор места, ресурсы)';
 
 
 // Вымышленные названия провинций
@@ -73,6 +73,11 @@ export const BUILDINGS = {
     jobs: 150, energy: -30, consumes: { fuel: 2 },
     desc: 'Вырабатывает энергию для всех зданий государства. Жжёт топливо.',
   },
+  steelworks: {
+    name: 'Сталелитейный завод', icon: '🏭', cost: { money: 900, steel: 60 }, days: 12,
+    jobs: 450, energy: 12, consumes: { fuel: 3 }, produces: { steel: 9 },
+    desc: 'Плавит сталь из топлива. Не зависит от руды, но жжёт топливо.',
+  },
   electronics: {
     name: 'Завод электроники', icon: '🔌', cost: { money: 1000, steel: 80 }, days: 12,
     jobs: 400, energy: 10, consumes: { steel: 4 }, produces: { electronics: 3 },
@@ -80,7 +85,7 @@ export const BUILDINGS = {
   },
 };
 
-export const BUILD_ORDER = ['housing', 'power', 'mine', 'refinery', 'electronics'];
+export const BUILD_ORDER = ['housing', 'power', 'mine', 'refinery', 'steelworks', 'electronics'];
 
 // Города: уровень зависит от населения, определяет число слотов
 export const CITY_LEVELS = [

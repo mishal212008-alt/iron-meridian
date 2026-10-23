@@ -155,3 +155,15 @@ h3 small { font-weight: 400; color: var(--muted); }
   .buildgrid { grid-template-columns: 1fr; }
 }
 @media (max-height: 480px) { #rail span:not(.ni) { display: none; } #rail .ni { font-size: 20px; } }
+
+.two { display: flex; gap: 8px; margin-top: 8px; } .two .btn { flex: 1; padding: 9px 8px; font-size: 14px; } .two .btn.ghost { flex: 0 0 34%; }
+.bcard .two .btn { width: auto; margin-top: 0; }
+.mini.wide { flex: 1; width: auto; }
+.pos { color: var(--pos); } .neg { color: var(--neg); }
+.dpin { position: absolute; left: 0; top: 0; font-size: 20px; line-height: 1; padding: 3px 5px; border-radius: 50%; background: rgba(8,14,20,.8); border: 2px solid var(--c, #888);
+  will-change: transform; box-shadow: 0 2px 6px rgba(0,0,0,.5); }
+.dpin.used { opacity: .65; } .dpin.mine { border-width: 3px; }
+#placebar { position: absolute; left: 10px; right: 10px; bottom: calc(10px + var(--safe-bottom)); max-width: 460px; margin: 0 auto; background: rgba(17,27,37,.97);
+  border: 1px solid var(--line); border-top: 2px solid var(--amber); border-radius: 12px; padding: 10px 12px; z-index: 6; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
+#placebar .pb-t { font-size: 15px; } #placebar .pb-s { font-size: 13px; margin: 3px 0 8px; } #placebar .pb-s.ok2 { color: var(--pos); } #placebar .pb-s.bad2 { color: var(--neg); }
+#placebar .two .btn.ghost { flex: 0 0 30%; }

@@ -1,6 +1,6 @@
 // HTML-панели интерфейса (без состояния: всё берётся из игры).
 import { BUILDINGS, BUILD_ORDER, CITY_LEVELS, ECON, MAX_LEVEL, RES, RES_ICON, RES_LABEL, STATES_DEF, TERRAIN } from './data.js';
-import { buildError, cityName, costOf, housingCap, jobsOf, levelOf, slots, staffing, upgradeError } from './sim.js';
+import { buildError, canAfford, cityName, cityProduction, costOf, housingCap, jobsOf, levelOf, slots, staffing, upgradeError } from './sim.js';
 
 export function fmt(n) {
   const a = Math.abs(n);
@@ -15,6 +15,7 @@ export const TABS = {
   city: { icon: '🏙️', name: 'Город' },
   build: { icon: '🏗️', name: 'Строить' },
   prod: { icon: '🏭', name: 'Производство' },
+  res: { icon: '🧭', name: 'Ресурсы' },
   state: { icon: '📊', name: 'Страна' },
 };
 
@@ -143,27 +144,64 @@ export function citiesListHtml(g) {
 export function buildHtml(g, p) {
   const s = g.states[g.playerState];
   const mineSel = p && p.owner === g.playerState;
-  let html = head('Строительство', mineSel ? `${dot(s.color)}Город «${p.name}»: ${p.buildings.length}/${slots(p)} мест` : 'Выбери свой город на карте или в списке');
-  if (!mineSel) html += `<p class="muted">Ниже — что можно построить и где это лучше всего делать.</p>`;
+  let html = head('Строительство', mineSel ? `${dot(s.color)}Выбран город «${p.name}»: ${p.buildings.length}/${slots(p)} мест` : `${dot(s.color)}Выбери здание, потом место на карте`);
+  html += '<p class="muted">Нажми «Выбрать место», затем коснись карты на своей территории. Зелёный круг — можно строить.</p>';
   const mineCities = g.provs.filter((q) => q.owner === g.playerState);
   for (const type of BUILD_ORDER) {
     const d = BUILDINGS[type];
-    const err = mineSel ? buildError(g, p, type) : 'Сначала выбери город';
-    const spots = mineCities.filter((q) => !buildError(g, q, type)).sort((a, b) => {
-      const sa = (d.needs ? a.deposits[d.needs] : 0) * 100000 + a.pop, sb = (d.needs ? b.deposits[d.needs] : 0) * 100000 + b.pop;
-      return sb - sa;
-    }).slice(0, 5);
-    const spotText = d.needs ? (mineCities.filter((q) => q.deposits[d.needs]).length ? 'Месторождения: ' : 'В вашей стране нет месторождения') : 'Подходящие города:';
-    const spotCities = d.needs ? mineCities.filter((q) => q.deposits[d.needs] && q.buildings.length < slots(q)).slice(0, 5) : spots;
+    const afford = canAfford(s, costOf(type, 1));
+    const err = mineSel ? buildError(g, p, type) : null;
+    const spotCities = (d.needs ? mineCities.filter((q) => q.deposits[d.needs] && q.buildings.length < slots(q)) : mineCities.filter((q) => q.buildings.length < slots(q)).sort((a, b) => b.pop - a.pop)).slice(0, 5);
+    const noDep = d.needs && !mineCities.some((q) => q.deposits[d.needs]);
     html += `<div class="bcard">
         <div class="bt"><span>${d.icon}</span><b>${d.name}</b></div>
         <div class="bd">${d.desc}</div>
         <div class="bd">Эффект (1 ур.): ${ratesText(type, 1)}</div>
         <div class="bc">${costHtml(d.cost, s)} <span class="days">⏱ ${d.days} дн.</span></div>
-        ${spotCities.length ? `<div class="spots"><span class="muted">${spotText}</span><div class="chips">${spotCities.map((q) => cityBtn(g, q)).join('')}</div></div>` : (d.needs ? `<div class="err">${spotText}</div>` : '')}
-        <button class="btn" data-act="build" data-type="${type}" ${err ? 'disabled' : ''}>${err ? err : 'Построить здесь'}</button>
+        ${d.needs ? `<div class="spots"><span class="${noDep ? 'err' : 'muted'}">${noDep ? 'В вашей стране нет месторождения' : 'Строить у месторождения:'}</span><div class="chips">${spotCities.map((q) => cityBtn(g, q)).join('')}</div></div>` : ''}
+        <div class="two">
+          <button class="btn" data-act="place" data-type="${type}" ${afford && !noDep ? '' : 'disabled'}>${afford ? '📍 Выбрать место' : 'Не хватает ресурсов'}</button>
+          ${mineSel ? `<button class="btn ghost" data-act="build" data-type="${type}" ${err ? 'disabled' : ''} title="${err || ''}">⚡ Авто</button>` : ''}
+        </div>
+        ${err && mineSel ? `<div class="err">${err} (авто)</div>` : ''}
       </div>`;
   }
+  return html;
+}
+
+export function resHtml(g) {
+  const s = g.states[g.playerState];
+  const mine = g.provs.filter((p) => p.owner === g.playerState);
+  let html = head('Ресурсы на карте', 'Месторождения и кто сколько производит');
+  html += '<p class="muted">Пока открыта эта вкладка, на карте видны все месторождения: ⛰️ руда, 🛢 нефть.</p>';
+
+  const deps = [];
+  for (const p of g.provs) for (const kind of ['steel', 'oil']) if (p.deposits[kind]) deps.push({ p, kind });
+  const row = ({ p, kind }) => {
+    const bType = kind === 'steel' ? 'mine' : 'refinery';
+    const used = p.buildings.filter((b) => b.type === bType);
+    const own = p.owner === g.playerState;
+    const d = p.depositPos[kind];
+    const status = used.length ? `<span class="tag work">⚙ ${BUILDINGS[bType].name}${used.some((b) => b.buildLeft > 0) ? ' (строится)' : ' ур.' + used[0].level}</span>` : '<span class="tag">свободно</span>';
+    return `<div class="brow"><div class="bicon">${kind === 'steel' ? '⛰️' : '🛢'}</div>
+        <div class="binfo"><b>${kind === 'steel' ? 'Руда' : 'Нефть'}${p.deposits[kind] > 1 ? ' (богатая)' : ''}</b> <span class="lv">${dot(g.states[p.owner].color)}${p.name}</span><div>${status}</div></div>
+        <div class="bact"><button class="btn small ghost" data-act="look" data-x="${d[0]}" data-z="${d[1]}" aria-label="Показать">🔎</button>
+        ${own && !used.length ? `<button class="btn small" data-act="place" data-type="${bType}" data-x="${d[0]}" data-z="${d[1]}" ${canAfford(s, costOf(bType, 1)) ? '' : 'disabled'}>🏗️</button>` : ''}</div></div>`;
+  };
+  html += `<h3>Ваши месторождения <small>${deps.filter((d) => d.p.owner === g.playerState).length}</small></h3>`;
+  html += deps.filter((d) => d.p.owner === g.playerState).map(row).join('') || '<p class="muted">Нет.</p>';
+  html += '<h3>Чужие месторождения</h3>' + (deps.filter((d) => d.p.owner !== g.playerState).map(row).join('') || '<p class="muted">Нет.</p>');
+
+  html += '<h3>Распределение производства</h3>';
+  const prod = mine.map((p) => ({ p, c: cityProduction(p) }));
+  for (const k of RES) {
+    const list = prod.map(({ p, c }) => ({ p, v: c[k].prod, u: c[k].cons })).filter((x) => x.v > 0.05 || x.u > 0.05).sort((a, b) => b.v - a.v).slice(0, 6);
+    const max = Math.max(1, ...list.map((x) => x.v));
+    html += `<div class="pgroup"><div class="pg-h">${RES_ICON[k]} ${RES_LABEL[k]} <span class="muted">на складе ${fmt(s[k])}</span></div>`;
+    html += list.length ? list.map((x) => `<button class="prow" data-act="pick-city" data-id="${x.p.id}"><span>${x.p.name}</span><span class="mini wide"><i style="width:${Math.round((x.v / max) * 100)}%" class="ok"></i></span><span class="pc wide pos">+${x.v.toFixed(1)}</span>${x.u > 0.05 ? `<span class="pc wide neg">−${x.u.toFixed(1)}</span>` : ''}</button>`).join('') : '<p class="muted">Никто не производит.</p>';
+    html += '</div>';
+  }
+  html += '<div class="tip info">Ресурсы общие для всей страны. Склады и перевозки колоннами появятся на следующем этапе: тогда расстояние между городами будет иметь значение.</div>';
   return html;
 }
 

@@ -1,17 +1,16 @@
 // 3D-карта на Three.js: цельный рельеф с текстурой, леса, дома, здания, подписи городов,
 // камера с жестами. Сцена строится без WebGL, поэтому её можно проверять в node (режим headless).
 import * as THREE from './vendor/three.min.js';
-import { levelOf } from './sim.js';
 import {
   CELL, HEIGHT_SCALE, WORLD, fromGrid, gridSample, provAt, surfaceFromH, surfaceY, territoryAt,
 } from './world.js';
-import { SEL_TEX, TEX, paintSelection, paintTerrain } from './terrain.js';
+import { SEL_TEX, TEX, makeDetail, paintSelection, paintTerrain } from './terrain.js';
 
 const { SZ, HALF } = WORLD;
 const DEG = Math.PI / 180;
 const SLOT_ANGLES = [-60, 0, 60, 120, 180, 240].map((a) => a * DEG);
 const RING_R = 3.5;
-const BSCALE = 2.2; // масштаб моделей зданий
+const BSCALE = 2.4; // масштаб моделей зданий
 
 const hash = (n) => { const x = Math.sin(n * 12.9898 + 4.1) * 43758.5453; return x - Math.floor(x); };
 const HEX = (s) => parseInt(s.slice(1), 16);
@@ -43,62 +42,121 @@ function cone(r, h, color, x, y, z, seg = 6, rotY = 0) {
 }
 
 // ---------- модели зданий ----------
+const rot = (o, x = 0, y = 0, z = 0) => { o.rotation.set(x, y, z); return o; };
+const pad = (w, d, c = 0x8b9096) => box(w, 0.025, d, c, 0, 0, 0);
+function fence(g, w, d, c = 0x6d7176) {
+  for (let i = 0; i <= 6; i++) {
+    const x = -w / 2 + (w * i) / 6;
+    g.add(box(0.01, 0.05, 0.01, c, x, 0.025, d / 2)); g.add(box(0.01, 0.05, 0.01, c, x, 0.025, -d / 2));
+  }
+  g.add(box(w, 0.008, 0.008, c, 0, 0.06, d / 2)); g.add(box(w, 0.008, 0.008, c, 0, 0.06, -d / 2));
+}
+function tree(x, z, s = 1) { const g = new THREE.Group(); g.add(cone(0.035 * s, 0.1 * s, 0x2f6b3a, x, 0.025, z, 6)); return g; }
+
 function modelHousing(level) {
   const g = new THREE.Group();
-  const pos = [[-0.09, -0.07], [0.09, -0.05], [-0.02, 0.1], [0.11, 0.1]];
-  for (let i = 0; i < 1 + level; i++) {
-    const [x, z] = pos[i];
-    const w = 0.13 + 0.02 * (i % 2), h = 0.1 + 0.03 * level;
-    g.add(box(w, h, w, 0xcfc8b8, x, 0, z));
-    g.add(cone(w * 0.78, 0.07, 0x9c4a3c, x, h, z, 4, Math.PI / 4));
+  g.add(pad(0.54, 0.5, 0x9a9a92));
+  const spots = [[-0.12, -0.1], [0.12, -0.1], [-0.12, 0.12], [0.12, 0.12]];
+  for (let i = 0; i < Math.min(4, 1 + level); i++) {
+    const [x, z] = spots[i];
+    const h = 0.26 + 0.07 * level + 0.05 * (i % 2);
+    g.add(box(0.17, h, 0.17, 0xddd5c4, x, 0.025, z));
+    for (let k = 0; k < Math.floor(h / 0.07); k++) g.add(box(0.172, 0.02, 0.172, 0x5d7a99, x, 0.06 + k * 0.07, z));
+    g.add(box(0.19, 0.025, 0.19, 0x6b6b70, x, 0.025 + h, z));
   }
+  g.add(tree(0, -0.02, 1.3)); g.add(tree(-0.22, 0.0, 1)); g.add(tree(0.22, 0.02, 1));
   return g;
 }
 function modelMine(level) {
   const g = new THREE.Group();
-  g.add(box(0.36, 0.05, 0.3, 0x4a4338, 0, 0, 0));
-  const hh = 0.26 + 0.05 * level;
-  g.add(box(0.035, hh, 0.035, 0x7d6849, -0.06, 0.05, 0));
-  g.add(box(0.035, hh, 0.035, 0x7d6849, 0.06, 0.05, 0));
-  g.add(box(0.2, 0.03, 0.03, 0x7d6849, 0, 0.05 + hh, 0));
-  const wheel = cyl(0.05, 0.02, 0xc9b27a, 0, 0.05 + hh - 0.01, 0.03, 12);
-  wheel.rotation.x = Math.PI / 2; g.add(wheel);
-  g.add(cone(0.1 + 0.025 * level, 0.1 + 0.03 * level, 0x5b4a3a, 0.11, 0.05, 0.08, 7));
+  g.add(pad(0.58, 0.46, 0x5d584f));
+  // копёр: две наклонные стойки, шкив, перекладины
+  g.add(rot(box(0.022, 0.4, 0.022, 0x7d6849, -0.17, 0.025, -0.1), 0, 0, 0.22));
+  g.add(rot(box(0.022, 0.4, 0.022, 0x7d6849, -0.05, 0.025, -0.1), 0, 0, -0.22));
+  g.add(rot(box(0.022, 0.4, 0.022, 0x7d6849, -0.17, 0.025, -0.02), 0, 0, 0.22));
+  g.add(rot(box(0.022, 0.4, 0.022, 0x7d6849, -0.05, 0.025, -0.02), 0, 0, -0.22));
+  g.add(box(0.14, 0.02, 0.1, 0x5a4a38, -0.11, 0.38 + 0.0, -0.06));
+  g.add(rot(cyl(0.06, 0.02, 0xd8c070, -0.11, 0.4, -0.06, 14), Math.PI / 2, 0, 0));
+  for (const y of [0.14, 0.26]) g.add(box(0.14, 0.012, 0.012, 0x7d6849, -0.11, y, -0.1));
+  // здание ствола и конвейер
+  g.add(box(0.2, 0.13, 0.15, 0x8a7a5a, 0.07, 0.025, 0.1));
+  g.add(box(0.22, 0.02, 0.17, 0x44464c, 0.07, 0.155, 0.1));
+  g.add(rot(box(0.34, 0.018, 0.04, 0x3d4046, 0.2, 0.15, -0.02), 0, 0, 0.5));
+  for (let i = 0; i < 1 + level; i++) g.add(cone(0.1 + 0.02 * i, 0.12 + 0.03 * i, i % 2 ? 0x6a4a3a : 0x4b3d34, 0.25 + i * 0.07, 0.025, -0.12 + i * 0.1, 7));
+  // рельсы и вагонетка
+  g.add(box(0.3, 0.008, 0.008, 0x888, -0.05, 0.03, 0.2)); g.add(box(0.3, 0.008, 0.008, 0x888, -0.05, 0.03, 0.23));
+  g.add(box(0.06, 0.04, 0.045, 0xd9902f, -0.12, 0.04, 0.215));
+  fence(g, 0.56, 0.44);
   return g;
 }
 function modelRefinery(level) {
   const g = new THREE.Group();
-  g.add(box(0.38, 0.03, 0.3, 0x59626b, 0, 0, 0));
-  for (let i = 0; i < 1 + level; i++) {
-    g.add(cyl(0.065, 0.14 + 0.03 * (i % 2), 0xe3e8ec, -0.12 + i * 0.12, 0.03, -0.06));
+  g.add(pad(0.6, 0.52, 0x4d5359));
+  for (let i = 0; i < 2 + level; i++) {
+    const x = -0.2 + (i % 2) * 0.14, z = 0.12 + Math.floor(i / 2) * 0.14 - (i > 1 ? 0 : 0);
+    g.add(cyl(0.062, 0.1 + 0.02 * (i % 2), 0xe6eaee, x, 0.025, z));
+    g.add(cyl(0.066, 0.012, 0xb34a3a, x, 0.12 + 0.02 * (i % 2), z));
   }
-  g.add(cyl(0.012, 0.36, 0x707880, 0.14, 0.03, 0.08, 6));
-  g.add(cone(0.025, 0.06, 0xd9562b, 0.14, 0.39, 0.08, 6));
-  g.add(box(0.28, 0.025, 0.03, 0x8d949b, 0, 0.1, 0.04));
+  // колонны
+  for (const [x, h] of [[0.04, 0.5], [0.15, 0.4]]) {
+    g.add(cyl(0.032, h, 0xb8bec4, x, 0.025, -0.08, 10));
+    for (let k = 1; k < 5; k++) g.add(cyl(0.038, 0.012, 0x8b9299, x, 0.025 + (h * k) / 5, -0.08, 10));
+    g.add(cone(0.032, 0.05, 0x7b828a, x, 0.025 + h, -0.08, 10));
+  }
+  g.add(box(0.34, 0.02, 0.02, 0x8d949b, -0.02, 0.14, 0.02)); g.add(box(0.34, 0.02, 0.02, 0x8d949b, -0.02, 0.18, 0.02));
+  for (const x of [-0.18, -0.02, 0.14]) g.add(box(0.014, 0.16, 0.014, 0x6d747a, x, 0.025, 0.02));
+  g.add(box(0.14, 0.1, 0.1, 0x93392d, 0.2, 0.025, 0.14));
+  // факел
+  g.add(cyl(0.01, 0.44, 0x70777e, -0.25, 0.025, -0.15, 6));
+  g.add(cone(0.028, 0.07, 0xff8a2a, -0.25, 0.465, -0.15, 6));
+  g.userData.smoke = [[-0.25, 0.55, -0.15]];
   return g;
 }
 function modelPower(level) {
   const g = new THREE.Group();
-  g.add(box(0.32, 0.12, 0.22, 0x9aa4ae, -0.03, 0, 0.03));
-  g.add(box(0.32, 0.02, 0.22, 0x5a6670, -0.03, 0.12, 0.03));
-  for (let i = 0; i < Math.min(level, 2) + 1; i++) {
-    const x = 0.1 + i * 0.07, h = 0.34 + 0.04 * level;
-    g.add(cyl(0.032, h, 0xd5d7de, x, 0, -0.1, 10));
-    g.add(cyl(0.034, 0.05, 0xb0392e, x, h - 0.06, -0.1, 10));
-  }
-  g.add(frustum(0.08, 0.2, 0xb7bcc4, -0.13, 0.12, -0.11));
+  g.add(pad(0.66, 0.54, 0x7b838b));
+  g.add(box(0.36, 0.14, 0.2, 0xa9b2ba, -0.08, 0.025, 0.14));
+  g.add(box(0.38, 0.02, 0.22, 0x555f69, -0.08, 0.165, 0.14));
+  g.add(box(0.14, 0.3, 0.14, 0x8e979f, -0.08, 0.025, -0.02));
+  // красно-белая труба
+  for (let k = 0; k < 6; k++) g.add(cyl(0.032 - k * 0.002, 0.07, k % 2 ? 0xe9e9ec : 0xb83a30, 0.2, 0.025 + k * 0.07, -0.12, 12));
+  // градирни
+  const n = 1 + Math.min(level, 2);
+  for (let i = 0; i < n; i++) g.add(frustum(0.1, 0.3, 0xd4d6da, -0.2 + i * 0.2, 0.025, -0.2, 16));
+  // открытое распределительное устройство
+  for (let i = 0; i < 3; i++) { g.add(box(0.012, 0.14, 0.012, 0x6a7078, 0.1 + i * 0.07, 0.025, 0.18)); g.add(box(0.05, 0.01, 0.01, 0x6a7078, 0.1 + i * 0.07, 0.15, 0.18)); }
+  g.userData.smoke = [[0.2, 0.47, -0.12], ...Array.from({ length: n }, (_, i) => [-0.2 + i * 0.2, 0.33, -0.2])];
   return g;
 }
 function modelElectronics(level) {
   const g = new THREE.Group();
-  g.add(box(0.4, 0.09, 0.27, 0xb4bcc5, 0, 0, 0));
-  for (let i = 0; i < 3; i++) g.add(box(0.09, 0.03, 0.2, 0x5fa3d9, -0.12 + i * 0.12, 0.09, 0));
-  if (level > 1) g.add(box(0.3, 0.07, 0.2, 0xaab3bc, 0, 0.09, 0));
-  if (level > 2) g.add(cyl(0.025, 0.2, 0x8a939c, 0.17, 0.09, 0.1, 8));
-  g.add(box(0.06, 0.07, 0.06, 0x3b4652, -0.18, 0, 0.14));
+  g.add(pad(0.66, 0.54, 0x7d858d));
+  g.add(box(0.46, 0.1, 0.26, 0xcdd2d8, -0.03, 0.025, 0));
+  for (let i = 0; i < 4; i++) g.add(rot(box(0.1, 0.045, 0.26, 0x9aa3ab, -0.18 + i * 0.12, 0.125, 0), 0, 0, 0.32));
+  if (level > 1) for (let i = 0; i < 3; i++) g.add(rot(box(0.12, 0.012, 0.09, 0x27457a, -0.15 + i * 0.14, 0.2, 0.0), 0, 0, -0.25));
+  g.add(box(0.14, 0.2, 0.12, 0x8db2cc, 0.24, 0.025, -0.08));
+  g.add(box(0.15, 0.015, 0.13, 0x3b4652, 0.24, 0.225, -0.08));
+  for (let i = 0; i < 3; i++) g.add(box(0.05, 0.05, 0.03, 0x39424c, -0.18 + i * 0.1, 0.025, 0.17));
+  if (level > 2) { g.add(cyl(0.01, 0.2, 0x8a939c, -0.28, 0.12, -0.18, 6)); g.add(cone(0.05, 0.03, 0xe6e6e9, -0.28, 0.32, -0.18, 12)); }
+  for (let i = 0; i < 3; i++) g.add(box(0.05, 0.03, 0.09, i % 2 ? 0x2f7bd0 : 0xdd8f2c, 0.2 + (i % 2) * 0.05, 0.025, 0.14 + (i > 1 ? 0.06 : 0)));
   return g;
 }
-const MODELS = { housing: modelHousing, mine: modelMine, refinery: modelRefinery, power: modelPower, electronics: modelElectronics };
+function modelSteelworks(level) {
+  const g = new THREE.Group();
+  g.add(pad(0.66, 0.54, 0x555a60));
+  g.add(cyl(0.075, 0.44, 0x8b4a3a, -0.18, 0.025, -0.08, 12));
+  for (let k = 1; k < 5; k++) g.add(cyl(0.082, 0.014, 0x56423a, -0.18, 0.025 + k * 0.085, -0.08, 12));
+  g.add(cone(0.07, 0.07, 0x6a3a2c, -0.18, 0.465, -0.08, 12));
+  g.add(box(0.06, 0.05, 0.02, 0xff7a1a, -0.18, 0.04, 0.0, ));
+  for (const z of [-0.18, 0.02]) g.add(cyl(0.045, 0.34 + 0.02 * level, 0xb5b9bd, -0.02, 0.025, z, 10));
+  g.add(box(0.4, 0.11, 0.2, 0x6f757b, 0.12, 0.025, 0.16));
+  g.add(box(0.42, 0.02, 0.22, 0x474c52, 0.12, 0.135, 0.16));
+  g.add(cone(0.14, 0.12, 0x2b2a2a, 0.24, 0.025, -0.14, 7));
+  g.add(cyl(0.02, 0.5, 0x7a8087, 0.25, 0.025, 0.0, 8));
+  g.userData.smoke = [[-0.18, 0.55, -0.08], [0.25, 0.55, 0.0]];
+  return g;
+}
+const MODELS = { housing: modelHousing, mine: modelMine, refinery: modelRefinery, power: modelPower, electronics: modelElectronics, steelworks: modelSteelworks };
 
 function scaffold() {
   const g = new THREE.Group();
@@ -160,6 +218,45 @@ const bakedMat = () => (bakedMaterial ||= new THREE.MeshStandardMaterial({
 }));
 
 const WALLS = [0xe9dfca, 0xdacfb6, 0xcdc1a2, 0xf0e8d8, 0xcfae8e, 0xd8d2c6];
+const TALL = [0xa9bccb, 0xbfc9d0, 0xd8d3c6, 0x9fb0b8];
+const CAR_COLORS = [0xd8433a, 0x2f6fd0, 0xe9e9ec, 0x2b2d33, 0xe3b02f, 0x3c9a5a];
+
+// лента вдоль поверхности (дороги и улицы). acc — накопитель вершин.
+function addStrip(acc, w, pts, width, lift, color) {
+  const rs = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 0.35));
+    for (let k = 0; k < n; k++) rs.push([ax + ((bx - ax) * k) / n, az + ((bz - az) * k) / n]);
+  }
+  rs.push(pts[pts.length - 1]);
+  const base = acc.pos.length / 3;
+  const c = new THREE.Color(color);
+  for (let i = 0; i < rs.length; i++) {
+    const a = rs[Math.max(0, i - 1)], b = rs[Math.min(rs.length - 1, i + 1)];
+    let tx = b[0] - a[0], tz = b[1] - a[1];
+    const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
+    for (const sd of [-1, 1]) {
+      const x = rs[i][0] - tz * sd * width / 2, z = rs[i][1] + tx * sd * width / 2;
+      acc.pos.push(x, surfaceY(w, x, z) + lift, z);
+      acc.col.push(c.r, c.g, c.b);
+    }
+    if (i > 0) { const k = base + (i - 1) * 2; acc.idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3); }
+  }
+}
+function stripMesh(acc) {
+  if (!acc.idx.length) return null;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(acc.pos), 3));
+  g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(acc.col), 3));
+  g.setIndex(acc.idx);
+  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
+    vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
+  }));
+  m.frustumCulled = false;
+  return m;
+}
+const newAcc = () => ({ pos: [], col: [], idx: [] });
 
 // ---------- 3D-карта ----------
 export class MapView {
@@ -169,7 +266,7 @@ export class MapView {
     this.labelsEl = opts.labels || null;
     this.texSize = opts.texSize || 0;
     this.sel = -1;
-    this.onSelect = () => {};
+    this.onTap = () => {};
     this.dirty = true;
     this.w = opts.width || 390;
     this.h = opts.height || 560;
@@ -180,6 +277,8 @@ export class MapView {
     this.plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.8);
     this.tmpV = new THREE.Vector3();
     this.dummy = new THREE.Object3D();
+    this.pinMode = null;
+    this.t0 = 0;
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x0e345c);
@@ -205,11 +304,10 @@ export class MapView {
   // ---- построение мира ----
   setGame(game) {
     this.g = game;
-    const world = game.world;
-    this.wd = world;
+    this.wd = game.world;
     if (this.root) {
       this.scene.remove(this.root);
-      this.root.traverse((o) => { if (o.geometry && o.geometry !== bakedMat) o.geometry.dispose?.(); if (o.isInstancedMesh) o.dispose(); });
+      this.root.traverse((o) => { if (o.geometry) o.geometry.dispose?.(); if (o.isInstancedMesh) o.dispose(); });
     }
     this.root = new THREE.Group();
     this.scene.add(this.root);
@@ -218,8 +316,8 @@ export class MapView {
 
     this.buildTerrain();
     this.buildTrees();
+    this.buildRoads();
 
-    // выделение провинции и кольцо вокруг города
     this.selData = new Uint8Array(SEL_TEX * SEL_TEX * 4);
     this.selTex = new THREE.DataTexture(this.selData, SEL_TEX, SEL_TEX, THREE.RGBAFormat, THREE.UnsignedByteType);
     this.selTex.colorSpace = THREE.SRGBColorSpace;
@@ -234,12 +332,25 @@ export class MapView {
     this.ring.renderOrder = 10; this.ring.visible = false;
     this.root.add(this.ring);
 
-    // города: контейнеры с постройками + дома (instanced)
+    // место будущей постройки (призрак)
+    this.ghost = new THREE.Group(); this.ghost.visible = false;
+    this.ghostDisc = new THREE.Mesh(new THREE.RingGeometry(0, 1, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x4cd964, transparent: true, opacity: 0.35, depthTest: false }));
+    this.ghostDisc.renderOrder = 9;
+    this.ghostRing = new THREE.Mesh(new THREE.RingGeometry(0.92, 1, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x4cd964, depthTest: false }));
+    this.ghostRing.renderOrder = 9;
+    this.ghost.add(this.ghostDisc, this.ghostRing);
+    this.ghostType = null;
+    this.root.add(this.ghost);
+
     this.cityGroups = provs.map(() => { const grp = new THREE.Group(); this.root.add(grp); return grp; });
-    this.layouts = provs.map((p) => this.houseLayout(p));
+    this.layouts = provs.map((p) => this.cityLayout(p));
     this.sig = provs.map(() => '');
     this.hsig = '';
+    this.ssig = '';
     this.houseMeshes = [];
+    this.streetMesh = null;
+    this.smoke = provs.map(() => []);
+    this.buildCars();
     this.buildLabels();
     this.sync();
 
@@ -248,7 +359,7 @@ export class MapView {
   }
 
   buildTerrain() {
-    const SEG = 200;
+    const SEG = 240;
     const geom = new THREE.PlaneGeometry(SZ, SZ, SEG, SEG);
     geom.rotateX(-Math.PI / 2);
     const P = geom.attributes.position, UV = geom.attributes.uv;
@@ -268,14 +379,31 @@ export class MapView {
     if (this.renderer) tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
     tex.needsUpdate = true;
     this.terrainTex = tex;
-    this.terrain = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({ map: tex }));
+
+    // мелкая текстура-«шум» поверх земли: вблизи земля не размыта
+    const dt = new THREE.DataTexture(makeDetail(128), 128, 128, THREE.RGBAFormat, THREE.UnsignedByteType);
+    dt.wrapS = THREE.RepeatWrapping; dt.wrapT = THREE.RepeatWrapping;
+    dt.magFilter = THREE.LinearFilter; dt.minFilter = THREE.LinearMipmapLinearFilter; dt.generateMipmaps = true;
+    if (this.renderer) dt.anisotropy = 4;
+    dt.needsUpdate = true;
+    const m = new THREE.MeshBasicMaterial({ map: tex });
+    m.onBeforeCompile = (sh) => {
+      sh.uniforms.detailMap = { value: dt };
+      sh.fragmentShader = sh.fragmentShader
+        .replace('void main() {', 'uniform sampler2D detailMap;\nvoid main() {')
+        .replace('#include <map_fragment>', `#include <map_fragment>
+          float dn = texture2D(detailMap, vMapUv * 110.0).r;
+          float dm = texture2D(detailMap, vMapUv * 26.0).g;
+          diffuseColor.rgb *= 1.0 + (dn - 0.5) * 0.34 + (dm - 0.5) * 0.24;`);
+    };
+    this.terrain = new THREE.Mesh(geom, m);
     this.root.add(this.terrain);
   }
 
   buildTrees() {
     const w = this.wd;
-    const pines = [], oaks = [], peaks = [];
-    const STEP = 0.46;
+    const pines = [], oaks = [], peaks = [], bushes = [];
+    const STEP = 0.42;
     for (let gz = 0; gz < SZ / STEP; gz++) {
       for (let gx = 0; gx < SZ / STEP; gx++) {
         const k = gz * 1000 + gx;
@@ -283,10 +411,12 @@ export class MapView {
         const hv = gridSample(w.h, x, z);
         if (hv > 0.012 && hv < 0.3) {
           const f = gridSample(w.forest, x, z);
-          if (f > 0.16 && hash(k + 3) < f * 0.95 && pines.length + oaks.length < 7500) {
+          if (f > 0.16 && hash(k + 3) < f * 0.95 && pines.length + oaks.length < 9000) {
             const s = 0.75 + hash(k + 7) * 0.7;
             const t = { x, z, y: surfaceFromH(hv), s, c: hash(k + 11) };
             if (hv > 0.14 || hash(k + 13) < 0.38) pines.push(t); else oaks.push(t);
+          } else if (f < 0.1 && hv > 0.03 && hash(k + 23) < 0.035 && bushes.length < 2500 && gridSample(w.river, x, z) < 0.2) {
+            bushes.push({ x, z, y: surfaceFromH(hv), s: 0.5 + hash(k + 29) * 0.6, c: hash(k + 31) });
           }
         } else if (hv >= 0.3 && hash(k + 17) < Math.min(0.3, (hv - 0.3) * 3)) {
           peaks.push({ x, z, y: surfaceFromH(hv) - 0.25, s: 0.7 + hash(k + 19) * 0.9, c: hv });
@@ -313,38 +443,142 @@ export class MapView {
     };
     mk(new THREE.ConeGeometry(0.3, 1, 6), pines, 0, [0x2c5f37, 0x336b3d, 0x264f30, 0x3d7544], 1, 1.25, 0.62);
     mk(new THREE.IcosahedronGeometry(0.34, 0), oaks, 100, [0x4a8a45, 0x3f7d3d, 0x5b9a4b, 0x6aa356], 1, 1.1, 0.38);
+    mk(new THREE.IcosahedronGeometry(0.2, 0), bushes, 300, [0x5d8f48, 0x6d9a4f, 0x7a8f4a, 0x4f8040], 1, 0.7, 0.1);
     mk(new THREE.ConeGeometry(0.42, 1, 5), peaks, 200, [0x8b8479, 0x9b958a, 0x7a746c, 0xa7a8ac, 0xe8eaee], 1, 1.5, 0.4);
     this.treeCount = pines.length + oaks.length;
   }
 
-  // раскладка домов вокруг города (спираль), только по суше
-  houseLayout(p) {
-    const w = this.wd, out = [];
-    const dep = Object.values(p.depositPos || {});
-    for (let i = 0; out.length < 64 && i < 200; i++) {
-      const ang = i * 2.39996 + hash(p.id * 31) * 6, r = 0.4 * Math.sqrt(i + 0.7) * (0.9 + hash(p.id * 97 + i) * 0.25);
-      const x = p.x + Math.cos(ang) * r, z = p.z + Math.sin(ang) * r;
-      const hv = gridSample(w.h, x, z);
-      if (hv < 0.018 || gridSample(w.river, x, z) > 0.25) continue;
-      if (dep.some((d) => Math.hypot(d[0] - x, d[1] - z) < 0.9)) continue;
-      const k = p.id * 1000 + i;
-      out.push({
-        x, z, y: surfaceFromH(hv), rot: hash(k) * 3.14, w: 0.26 + hash(k + 1) * 0.14, h: 0.2 + hash(k + 2) * 0.18,
-        wall: WALLS[Math.floor(hash(k + 3) * WALLS.length)], tone: 0.85 + hash(k + 4) * 0.3, tall: i < 7 && hash(k + 5) < 0.45,
-      });
+  // дороги между городами — настоящие ленты поверх рельефа
+  buildRoads() {
+    const acc = newAcc();
+    for (const r of this.wd.roads) {
+      addStrip(acc, this.wd, r.pts, 0.34, 0.05, 0x5d5446);
+      addStrip(acc, this.wd, r.pts, 0.22, 0.062, 0x9a8a70);
     }
-    return out;
+    const m = stripMesh(acc);
+    if (m) this.root.add(m);
+    this.roadLen = this.wd.roads.map((r) => {
+      const cum = [0];
+      for (let i = 1; i < r.pts.length; i++) cum.push(cum[i - 1] + Math.hypot(r.pts[i][0] - r.pts[i - 1][0], r.pts[i][1] - r.pts[i - 1][1]));
+      return cum;
+    });
   }
 
-  houseCount(p) { return Math.max(6, Math.min(64, Math.round(6 + p.pop / 90))); }
+  // машины на дорогах
+  buildCars() {
+    this.cars = [];
+    this.wd.roads.forEach((r, ri) => {
+      const total = this.roadLen[ri][this.roadLen[ri].length - 1];
+      const n = 1 + Math.floor(total / 9);
+      for (let k = 0; k < n; k++) {
+        const key = ri * 17 + k;
+        this.cars.push({ ri, s: hash(key) * total, v: (1.2 + hash(key + 1) * 1.6) * (k % 2 ? -1 : 1), color: CAR_COLORS[Math.floor(hash(key + 2) * CAR_COLORS.length)], truck: hash(key + 3) < 0.25 });
+      }
+    });
+    const mkCar = (g) => { const im = new THREE.InstancedMesh(g, new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true }), Math.max(1, this.cars.length)); im.frustumCulled = false; im.count = this.cars.length; this.root.add(im); return im; };
+    this.carMesh = mkCar(new THREE.BoxGeometry(0.15, 0.1, 0.3).translate(0, 0.07, 0));
+    const c = new THREE.Color();
+    this.cars.forEach((car, i) => { c.set(car.color); this.carMesh.setColorAt(i, c); });
+    if (this.carMesh.instanceColor) this.carMesh.instanceColor.needsUpdate = true;
+    // клубы дыма заводов
+    this.puffMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 1 }), 400);
+    this.puffMesh.frustumCulled = false; this.puffMesh.count = 0;
+    this.root.add(this.puffMesh);
+    this.updateCars(0);
+  }
 
-  rebuildHouses() {
+  updateCars(time) {
+    const w = this.wd;
+    this.cars.forEach((car, i) => {
+      const cum = this.roadLen[car.ri], pts = w.roads[car.ri].pts, total = cum[cum.length - 1];
+      let d = (car.s + car.v * time) % (total * 2); if (d < 0) d += total * 2;
+      const dist = d <= total ? d : total * 2 - d, fwd = d <= total;
+      let k = 1; while (k < cum.length - 1 && cum[k] < dist) k++;
+      const f = (dist - cum[k - 1]) / ((cum[k] - cum[k - 1]) || 1);
+      const ax = pts[k - 1][0], az = pts[k - 1][1], bx = pts[k][0], bz = pts[k][1];
+      const tx = bx - ax, tz = bz - az, l = Math.hypot(tx, tz) || 1;
+      const side = (fwd ? 1 : -1) * 0.06;
+      const x = ax + tx * f - (tz / l) * side, z = az + tz * f + (tx / l) * side;
+      this.dummy.position.set(x, surfaceY(w, x, z) + 0.06, z);
+      this.dummy.rotation.set(0, Math.atan2(tx, tz) + (fwd ? 0 : Math.PI), 0);
+      this.dummy.scale.set(1, 1, car.truck ? 1.5 : 1);
+      this.dummy.updateMatrix();
+      this.carMesh.setMatrixAt(i, this.dummy.matrix);
+    });
+    this.carMesh.instanceMatrix.needsUpdate = true;
+    // дым
+    const src = this.smoke.flat();
+    const c = new THREE.Color();
+    let n = 0;
+    for (let i = 0; i < src.length && n < 400; i++) {
+      for (let k = 0; k < 3 && n < 400; k++, n++) {
+        const ph = ((time * 0.35 + k / 3 + src[i].ph) % 1);
+        this.dummy.position.set(src[i].x + ph * 0.5, src[i].y + ph * 1.9, src[i].z + ph * 0.2);
+        this.dummy.rotation.set(ph * 3, ph * 2, 0);
+        const sc = (0.06 + ph * 0.17) * (1 - Math.max(0, ph - 0.7) * 3);
+        this.dummy.scale.setScalar(Math.max(0.001, sc));
+        this.dummy.updateMatrix();
+        this.puffMesh.setMatrixAt(n, this.dummy.matrix);
+        c.setScalar(src[i].dark ? 0.28 + ph * 0.2 : 0.85 - ph * 0.15);
+        this.puffMesh.setColorAt(n, c);
+      }
+    }
+    this.puffMesh.count = n;
+    this.puffMesh.instanceMatrix.needsUpdate = true;
+    if (this.puffMesh.instanceColor) this.puffMesh.instanceColor.needsUpdate = true;
+  }
+
+  // город: сетка кварталов с улицами и домами (порядок — от центра к окраинам)
+  cityLayout(p) {
+    const w = this.wd;
+    const th = hash(p.id * 13 + 2) * Math.PI / 2, ct = Math.cos(th), st = Math.sin(th), S = 0.86;
+    const dep = Object.values(p.depositPos || {});
+    const blocks = [];
+    for (let i = -3; i <= 3; i++) {
+      for (let j = -3; j <= 3; j++) {
+        const lx = i * S, lz = j * S, d = Math.hypot(lx, lz);
+        if (d > 2.75) continue;
+        const x = p.x + lx * ct - lz * st, z = p.z + lx * st + lz * ct;
+        const hv = gridSample(w.h, x, z);
+        if (hv < 0.02 || gridSample(w.river, x, z) > 0.25 || dep.some((q) => Math.hypot(q[0] - x, q[1] - z) < 1.2)) continue;
+        blocks.push({ i, j, x, z, d: d + hash(p.id * 7 + i * 5 + j) * 0.25 });
+      }
+    }
+    blocks.sort((a, b) => a.d - b.d);
+    const houses = [], edges = [], seen = new Set();
+    blocks.forEach((b, bi) => {
+      const core = b.d < 1.35, mid = b.d < 2.1;
+      const spots = core ? [[-0.17, -0.17], [0.17, 0.17]] : [[-0.17, -0.17], [0.17, -0.17], [-0.17, 0.17], [0.17, 0.17]];
+      spots.forEach(([ox, oz], k) => {
+        const x = b.x + (ox * ct - oz * st), z = b.z + (ox * st + oz * ct);
+        const key = p.id * 4000 + bi * 8 + k;
+        const hv = gridSample(w.h, x, z);
+        houses.push({
+          x, z, y: surfaceFromH(hv), rot: -th + (hash(key) < 0.5 ? 0 : Math.PI / 2) * 0, w: core ? 0.3 : mid ? 0.22 + hash(key + 1) * 0.05 : 0.19 + hash(key + 1) * 0.05,
+          h: core ? 0.5 + hash(key + 2) * 0.5 : mid ? 0.22 + hash(key + 2) * 0.14 : 0.15 + hash(key + 2) * 0.1,
+          wall: core ? TALL[Math.floor(hash(key + 3) * TALL.length)] : WALLS[Math.floor(hash(key + 3) * WALLS.length)], tone: 0.88 + hash(key + 4) * 0.24, tall: core,
+        });
+      });
+      const o = bi * spots.length;
+      for (const [a, c2, d2, e2] of [[-1, -1, 1, -1], [-1, 1, 1, 1], [-1, -1, -1, 1], [1, -1, 1, 1]]) {
+        const key = `${b.i * 2 + a},${b.j * 2 + c2}-${b.i * 2 + d2},${b.j * 2 + e2}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const pt = (u, v) => [p.x + (u * S / 2) * ct - (v * S / 2) * st, p.z + (u * S / 2) * st + (v * S / 2) * ct];
+        edges.push({ a: pt(b.i * 2 + a, b.j * 2 + c2), b: pt(b.i * 2 + d2, b.j * 2 + e2), order: o });
+      }
+    });
+    return { houses, edges };
+  }
+
+  houseCount(p) { return Math.max(8, Math.min(120, Math.round(8 + p.pop / 55))); }
+
+  rebuildHouses(counts) {
     for (const m of this.houseMeshes) { this.root.remove(m); m.dispose(); }
     this.houseMeshes = [];
     const { provs, states } = this.g;
-    const counts = provs.map((p) => Math.min(this.layouts[p.id].length, this.houseCount(p)));
     const total = counts.reduce((a, b) => a + b, 0);
-    const mk = (g, shadeFn) => {
+    const mk = (g) => {
       const im = new THREE.InstancedMesh(g, new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.9 }), Math.max(1, total));
       im.frustumCulled = false; im.count = total;
       return im;
@@ -356,49 +590,38 @@ export class MapView {
     for (const p of provs) {
       base.set(states[p.owner].color).multiplyScalar(0.75).lerp(new THREE.Color(0x8a4636), 0.45);
       for (let i = 0; i < counts[p.id]; i++, n++) {
-        const l = this.layouts[p.id][i];
-        const hh = l.tall ? l.h * 2.3 : l.h;
+        const l = this.layouts[p.id].houses[i];
         this.dummy.position.set(l.x, l.y - 0.02, l.z);
         this.dummy.rotation.set(0, l.rot, 0);
-        this.dummy.scale.set(l.w, hh, l.w);
+        this.dummy.scale.set(l.w, l.h, l.w);
         this.dummy.updateMatrix(); walls.setMatrixAt(n, this.dummy.matrix);
         col.set(l.wall).multiplyScalar(l.tone); walls.setColorAt(n, col);
-        this.dummy.position.y = l.y - 0.02 + hh;
-        this.dummy.scale.set(l.w * 1.18, l.tall ? 0.0001 : l.w * 0.8, l.w * 1.18);
+        this.dummy.position.y = l.y - 0.02 + l.h;
+        if (l.tall) this.dummy.scale.set(l.w * 1.06, 0.05, l.w * 1.06); else this.dummy.scale.set(l.w * 1.2, l.w * 0.75, l.w * 1.2);
         this.dummy.updateMatrix(); roofs.setMatrixAt(n, this.dummy.matrix);
-        col.copy(base).multiplyScalar(l.tone); roofs.setColorAt(n, col);
+        if (l.tall) col.setHex(0x6e7278); else col.copy(base).multiplyScalar(l.tone);
+        roofs.setColorAt(n, col);
       }
     }
     for (const im of [walls, roofs]) { im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true; this.root.add(im); this.houseMeshes.push(im); }
   }
 
-  // место здания: рудник/НПЗ — у месторождения, остальные — кольцом вокруг города
-  buildingSpot(p, b, i, used) {
-    const w = this.wd;
-    const near = (type) => {
-      const d = p.depositPos && p.depositPos[type];
-      if (!d) return null;
-      const k = used.filter((u) => u.type === b.type).length;
-      return { x: d[0] + 1.3 + k * 1.1, z: d[1] + 0.6 - k * 0.5, ang: 0 };
-    };
-    if (b.type === 'mine') { const s = near('steel'); if (s) return s; }
-    if (b.type === 'refinery') { const s = near('oil'); if (s) return s; }
-    const a0 = SLOT_ANGLES[i % SLOT_ANGLES.length] + (Math.floor(i / 6) * 0.5);
-    for (const dr of [0, 0.6, -0.6, 1.2]) {
-      for (const da of [0, 20, -20, 40, -40, 60, -60, 90, -90]) {
-        const a = a0 + da * DEG, r = RING_R + dr;
-        const x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
-        const hv = gridSample(w.h, x, z);
-        if (hv < 0.025 || hv > 0.26 || gridSample(w.river, x, z) > 0.2) continue;
-        if (used.some((u) => Math.hypot(u.x - x, u.z - z) < 1.5)) continue;
-        return { x, z, ang: a };
+  rebuildStreets(counts) {
+    if (this.streetMesh) { this.root.remove(this.streetMesh); this.streetMesh.geometry.dispose(); this.streetMesh = null; }
+    const acc = newAcc();
+    for (const p of this.g.provs) {
+      for (const e of this.layouts[p.id].edges) {
+        if (e.order >= counts[p.id]) continue;
+        addStrip(acc, this.wd, [e.a, e.b], 0.3, 0.05, 0x9b988f); // тротуар
+        addStrip(acc, this.wd, [e.a, e.b], 0.19, 0.062, 0x4d5056); // проезжая часть
       }
     }
-    return { x: p.x + Math.cos(a0) * RING_R, z: p.z + Math.sin(a0) * RING_R, ang: a0 };
+    this.streetMesh = stripMesh(acc);
+    if (this.streetMesh) this.root.add(this.streetMesh);
   }
 
   signature(p) {
-    return p.buildings.map((b) => `${b.type}${b.level}${b.buildLeft > 0 ? 'c' : ''}`).join(',') + '|' + (p.deposits.steel ? 's' : '') + (p.deposits.oil ? 'o' : '') + '|' + p.owner;
+    return p.buildings.map((b) => `${b.type}${b.level}${b.buildLeft > 0 ? 'c' : ''}@${b.x},${b.z}`).join(',') + '|' + (p.deposits.steel ? 's' : '') + (p.deposits.oil ? 'o' : '') + '|' + p.owner;
   }
 
   rebuildCity(p) {
@@ -409,7 +632,6 @@ export class MapView {
     }
     const st = this.g.states[p.owner];
     const sg = new THREE.Group(), fg = new THREE.Group();
-    // месторождения
     for (const kind of ['steel', 'oil']) {
       const d = p.depositPos && p.depositPos[kind];
       if (!p.deposits[kind] || !d) continue;
@@ -418,7 +640,6 @@ export class MapView {
       m.position.set(d[0], surfaceY(this.wd, d[0], d[1]), d[1]);
       sg.add(m);
     }
-    // столица: башня с флагом
     if (p.capital) {
       const t = new THREE.Group();
       t.add(box(0.7, 0.12, 0.7, 0xd8b04a, 0, 0, 0));
@@ -429,25 +650,31 @@ export class MapView {
       t.position.set(p.x, surfaceY(this.wd, p.x, p.z), p.z);
       sg.add(t);
     }
-    // здания
-    const used = [];
-    p.buildings.forEach((b, i) => {
-      const s = this.buildingSpot(p, b, i, used);
-      used.push({ ...s, type: b.type });
-      const y = surfaceY(this.wd, s.x, s.z);
+    const smoke = [];
+    p.buildings.forEach((b) => {
+      const y = surfaceY(this.wd, b.x, b.z);
       const m = new THREE.Group();
       if (b.level > 0) m.add(MODELS[b.type](b.level));
-      m.position.set(s.x, y, s.z); m.rotation.y = -s.ang + Math.PI / 2; m.scale.setScalar(BSCALE);
+      m.position.set(b.x, y, b.z); m.rotation.y = -Math.atan2(b.z - p.z, b.x - p.x) + Math.PI / 2; m.scale.setScalar(BSCALE);
       sg.add(m);
+      m.updateMatrixWorld(true);
+      if (b.level > 0 && b.buildLeft === 0 && (b.eff ?? 1) > 0.05) {
+        const model = m.children[0];
+        for (const q of (model && model.userData.smoke) || []) {
+          const v = new THREE.Vector3(q[0], q[1], q[2]); m.localToWorld(v);
+          smoke.push({ x: v.x, y: v.y, z: v.z, ph: hash(b.x * 7 + q[0] * 13), dark: b.type === 'refinery' || b.type === 'steelworks' });
+        }
+      }
       if (b.buildLeft > 0) {
         const sc = scaffold();
         if (b.level > 0) sc.position.set(0.18, 0, 0.18);
         const wrap = new THREE.Group();
         wrap.add(sc);
-        wrap.position.set(s.x, y, s.z); wrap.scale.setScalar(BSCALE);
+        wrap.position.set(b.x, y, b.z); wrap.scale.setScalar(BSCALE);
         fg.add(wrap);
       }
     });
+    this.smoke[p.id] = smoke;
     const baked = bake(sg);
     if (baked) { baked.userData.baked = true; grp.add(baked); }
     grp.add(fg);
@@ -459,20 +686,63 @@ export class MapView {
       const s = this.signature(p);
       if (s !== this.sig[p.id]) { this.sig[p.id] = s; this.rebuildCity(p); }
     }
-    const hs = provs.map((p) => this.houseCount(p) + ':' + p.owner).join(',');
-    if (hs !== this.hsig) { this.hsig = hs; this.rebuildHouses(); }
+    const counts = provs.map((p) => Math.min(this.layouts[p.id].houses.length, this.houseCount(p)));
+    const hs = counts.join(',') + provs.map((p) => p.owner).join('');
+    if (hs !== this.hsig) {
+      this.hsig = hs; this.rebuildHouses(counts);
+      const ss = provs.map((p) => this.layouts[p.id].edges.filter((e) => e.order < counts[p.id]).length).join(',');
+      if (ss !== this.ssig) { this.ssig = ss; this.rebuildStreets(counts); }
+    }
   }
+
+  // ---- призрак постройки, булавки месторождений ----
+  setGhost(type, x, z, ok) {
+    if (!type) { this.ghost.visible = false; this.ghostType = null; this.dirty = true; return; }
+    if (this.ghostType !== type) {
+      if (this.ghostModel) this.ghost.remove(this.ghostModel);
+      this.ghostModel = new THREE.Group();
+      const mdl = MODELS[type](1);
+      mdl.scale.setScalar(BSCALE);
+      this.ghostModel.add(mdl);
+      this.ghost.add(this.ghostModel);
+      this.ghostType = type;
+    }
+    const y = surfaceY(this.wd, x, z);
+    this.ghost.position.set(x, y, z);
+    const c = ok ? 0x4cd964 : 0xff5a5a;
+    this.ghostDisc.material.color.setHex(c); this.ghostRing.material.color.setHex(c);
+    this.ghostDisc.scale.setScalar(1.15); this.ghostRing.scale.setScalar(1.15);
+    this.ghostDisc.position.y = 0.12; this.ghostRing.position.y = 0.12;
+    this.ghostModel.visible = true;
+    this.ghost.visible = true;
+    this.dirty = true;
+  }
+
+  setPins(mode) { this.pinMode = mode; this.dirty = true; }
 
   // ---- подписи городов (HTML поверх карты) ----
   buildLabels() {
-    if (!this.labelsEl) { this.labels = null; return; }
+    if (!this.labelsEl) { this.labels = null; this.pins = null; return; }
     this.labelsEl.innerHTML = '';
-    this.labels = this.g.provs.map((p) => {
+    this.labels = this.g.provs.map(() => {
       const el = document.createElement('div');
       el.className = 'clabel';
       this.labelsEl.appendChild(el);
       return { el, text: '', vis: false };
     });
+    this.pins = [];
+    for (const p of this.g.provs) {
+      for (const kind of ['steel', 'oil']) {
+        const d = p.depositPos && p.depositPos[kind];
+        if (!p.deposits[kind] || !d) continue;
+        const el = document.createElement('div');
+        el.className = 'dpin ' + kind;
+        el.textContent = kind === 'steel' ? '⛰️' : '🛢';
+        el.style.display = 'none';
+        this.labelsEl.appendChild(el);
+        this.pins.push({ el, p, kind, x: d[0], z: d[1], vis: false });
+      }
+    }
   }
 
   updateLabels() {
@@ -499,6 +769,22 @@ export class MapView {
         L.text = text + cls; L.el.textContent = text; L.el.className = cls; L.el.style.setProperty('--c', states[p.owner].color);
       }
     }
+    for (const pin of this.pins || []) {
+      let vis = false;
+      const m = this.pinMode;
+      if (m && (m === 'all' || m === pin.kind)) {
+        v.set(pin.x, surfaceY(this.wd, pin.x, pin.z) + 1.2, pin.z).project(this.camera);
+        if (v.z < 1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05) {
+          vis = true;
+          pin.el.style.transform = `translate(-50%,-100%) translate(${((v.x + 1) / 2) * this.w}px,${((1 - v.y) / 2) * this.h}px)`;
+          const mine = pin.p.owner === playerState;
+          const used = pin.p.buildings.some((b) => (pin.kind === 'steel' ? b.type === 'mine' : b.type === 'refinery'));
+          const cls = `dpin ${pin.kind}${mine ? ' mine' : ''}${used ? ' used' : ''}`;
+          if (pin.cls !== cls) { pin.cls = cls; pin.el.className = cls; pin.el.style.setProperty('--c', states[pin.p.owner].color); }
+        }
+      }
+      if (vis !== pin.vis) { pin.vis = vis; pin.el.style.display = vis ? '' : 'none'; }
+    }
   }
 
   // ---- камера ----
@@ -516,7 +802,7 @@ export class MapView {
     const lim = HALF * 0.9;
     this.cam.tx = Math.max(-lim, Math.min(lim, this.cam.tx));
     this.cam.tz = Math.max(-lim, Math.min(lim, this.cam.tz));
-    this.cam.dist = Math.min(this.fitDist * 1.15, Math.max(5, this.cam.dist));
+    this.cam.dist = Math.min(this.fitDist * 1.15, Math.max(4, this.cam.dist));
   }
 
   fit() {
@@ -530,11 +816,13 @@ export class MapView {
     this.dirty = true;
   }
 
-  focus(p, zoom = 0.3) {
-    this.cam.dist = Math.min(this.cam.dist, Math.max(14, this.fitDist * zoom));
+  focus(p, zoom = 0.3) { this.focusAt(p.x, p.z, Math.max(14, this.fitDist * zoom)); }
+
+  focusAt(x, z, dist) {
+    this.cam.dist = Math.min(this.cam.dist, dist);
     const k = this.cam.dist * 0.1;
-    this.cam.tx = p.x + Math.sin(this.cam.yaw) * k;
-    this.cam.tz = p.z + Math.cos(this.cam.yaw) * k;
+    this.cam.tx = x + Math.sin(this.cam.yaw) * k;
+    this.cam.tz = z + Math.cos(this.cam.yaw) * k;
     this.clampCam();
     this.dirty = true;
   }
@@ -547,7 +835,7 @@ export class MapView {
       this.selTex.needsUpdate = true;
       this.selMesh.visible = true;
       this.ring.position.set(p.x, surfaceY(this.wd, p.x, p.z) + 0.1, p.z);
-      this.ring.scale.setScalar(2.6);
+      this.ring.scale.setScalar(2.9);
       this.ring.visible = true;
     } else {
       this.selMesh.visible = false;
@@ -573,15 +861,17 @@ export class MapView {
     return this.raycaster.ray.intersectPlane(this.plane, this.tmpV) ? this.tmpV.clone() : null;
   }
 
-  // какой город (провинция) под пальцем
-  hit(px, py) {
+  // что под пальцем: { x, z, land, id } (id — провинция, -1 в море)
+  pick(px, py) {
     this.raycaster.setFromCamera(new THREE.Vector2((px / this.w) * 2 - 1, -(py / this.h) * 2 + 1), this.camera);
     const res = this.raycaster.intersectObject(this.terrain, false);
-    if (!res.length) return -1;
+    if (!res.length) return null;
     const { x, z } = res[0].point;
-    if (gridSample(this.wd.h, x, z) <= 0.004) return -1;
-    return territoryAt(this.wd, x, z)[0];
+    const land = gridSample(this.wd.h, x, z) > 0.004;
+    return { x, z, land, id: land ? territoryAt(this.wd, x, z)[0] : -1 };
   }
+
+  hit(px, py) { const r = this.pick(px, py); return r ? r.id : -1; }
 
   // ---- жесты ----
   bind() {
@@ -643,7 +933,7 @@ export class MapView {
       if (had && this.tap && !this.tap.moved && performance.now() - this.tap.t < 500 && this.pointers.size === 0) {
         const l = local(e);
         this.updateCamera();
-        this.onSelect(this.hit(l.x, l.y));
+        this.onTap(this.pick(l.x, l.y));
       }
       if (this.pointers.size === 0) this.tap = null;
     };
@@ -659,9 +949,13 @@ export class MapView {
 
   draw() {
     this.sync();
+    // «жизнь» на карте (машины, дым) крутится, пока камера близко
+    const now = typeof performance !== 'undefined' ? performance.now() / 1000 : 0;
+    this.animating = !this.headless && this.cam.dist < this.fitDist * 0.62;
+    if (this.animating || !this.animStarted) { this.animStarted = true; this.updateCars(this.animating ? now : this.lastAnim || 0); if (this.animating) this.lastAnim = now; }
     this.updateCamera();
     this.updateLabels();
     if (this.renderer) this.renderer.render(this.scene, this.camera);
-    this.dirty = false;
+    this.dirty = this.animating;
   }
 }

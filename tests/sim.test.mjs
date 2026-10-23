@@ -1,5 +1,6 @@
 // Запуск: node tests/sim.test.mjs
 import { gridSample, territoryAt, provAt } from '../js/world.js';
+import { plotError, findSpot, cityProduction } from '../js/sim.js';
 import { newGame, tick, serialize, deserialize, stateProvs, startBuild, buildError } from '../js/sim.js';
 
 let fails = 0;
@@ -50,6 +51,28 @@ for (const seed of [1, 7, 42, 123, 999, 31337]) {
   const copy = deserialize(serialize(g));
   ok(copy.day === g.day && copy.provs.length === g.provs.length, 'сохранение не совпало');
   for (let i = 0; i < 20; i++) tick(copy);
+}
+
+// размещение зданий на карте
+{
+  const g = newGame({ seed: 11, playerState: 0 });
+  const p = g.provs.find((q) => q.owner === 0 && q.deposits.steel && !q.capital) || g.provs[g.states[0].capital];
+  g.states[0].money = 1e5; g.states[0].steel = 1e4;
+  ok(plotError(g, p, 'housing', p.x, p.z) === 'Слишком близко к центру города', 'центр города должен быть занят');
+  ok(plotError(g, p, 'housing', -39, -39) !== null, 'вода должна блокировать стройку');
+  const spot = findSpot(g, p, 'power');
+  ok(!!spot && !plotError(g, p, 'power', spot.x, spot.z), 'findSpot вернул плохое место');
+  if (p.deposits.steel) {
+    const d = p.depositPos.steel;
+    const mineSpot = findSpot(g, p, 'mine');
+    ok(!!mineSpot && Math.hypot(mineSpot.x - d[0], mineSpot.z - d[1]) <= 2.5, 'рудник не у месторождения');
+    ok(plotError(g, p, 'mine', spot ? spot.x : p.x + 4, spot ? spot.z : p.z) !== null, 'рудник вдали от руды должен быть запрещён');
+  }
+  ok(startBuild(g, p, 'power', spot) === null, 'startBuild в выбранное место не прошёл');
+  ok(plotError(g, p, 'power', spot.x + 0.5, spot.z) === 'Место занято', 'должна быть проверка занятости места');
+  for (let i = 0; i < 40; i++) tick(g);
+  const pr = cityProduction(p);
+  ok(Object.values(pr).every((v) => Number.isFinite(v.prod) && Number.isFinite(v.cons)), 'cityProduction NaN');
 }
 
 console.log(fails === 0 ? 'ВСЕ ПРОВЕРКИ ПРОШЛИ' : `ПРОВАЛОВ: ${fails}`);

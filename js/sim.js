@@ -2,7 +2,7 @@
 import {
   BUILDINGS, BUILD_ORDER, CITY_LEVELS, ECON, LEVEL_COST_MULT, MAX_LEVEL, RES, START, STATES_DEF,
 } from './data.js';
-import { generateWorld } from './world.js';
+import { generateWorld, gridSample, territoryAt } from './world.js';
 
 export const SAVE_KEY = 'iron-meridian-save-v2';
 
@@ -36,6 +36,7 @@ export function newGame({ seed = Date.now() % 1000000, playerState = 0, difficul
       if (spot) addDone(spot, kind[0], 1);
     }
   }
+  assignSpots(g);
   for (const p of g.provs) p.cityLevel = levelOf(p.pop);
   return g;
 }
@@ -90,13 +91,83 @@ export function buildError(g, p, type) {
   if (!canAfford(s, costOf(type, 1))) return 'Не хватает ресурсов';
   return null;
 }
-export function startBuild(g, p, type) {
-  const err = buildError(g, p, type);
-  if (err) return err;
-  pay(g.states[p.owner], costOf(type, 1));
-  p.buildings.push({ type, level: 0, buildLeft: BUILDINGS[type].days, target: 1 });
+
+// ---- размещение на карте ----
+export const PLOT = { minFromCity: 3.1, spacing: 1.75, depositReach: 2.5, depositKeep: 1.1 };
+
+export function plotError(g, p, type, x, z, ignore = null) {
+  const w = g.world, def = BUILDINGS[type];
+  const hv = gridSample(w.h, x, z);
+  if (hv < 0.02) return 'Здесь вода или пляж';
+  if (hv > 0.3) return 'Слишком крутой склон';
+  if (gridSample(w.river, x, z) > 0.25) return 'Здесь река';
+  if (territoryAt(w, x, z)[0] !== p.id) return 'Это территория другого города';
+  if (Math.hypot(x - p.x, z - p.z) < PLOT.minFromCity) return 'Слишком близко к центру города';
+  if (p.buildings.some((o) => o !== ignore && o.x !== undefined && Math.hypot(o.x - x, o.z - z) < PLOT.spacing)) return 'Место занято';
+  const dep = p.depositPos || {};
+  if (def.needs) {
+    const d = dep[def.needs];
+    if (!p.deposits[def.needs] || !d) return 'Нет месторождения';
+    if (Math.hypot(d[0] - x, d[1] - z) > PLOT.depositReach) return def.needs === 'steel' ? 'Рудник — рядом с рудой' : 'НПЗ — рядом с нефтью';
+  } else {
+    for (const d of Object.values(dep)) if (Math.hypot(d[0] - x, d[1] - z) < PLOT.depositKeep) return 'Оставьте месторождение для добычи';
+  }
   return null;
 }
+
+export function findSpot(g, p, type, ignore = null) {
+  const def = BUILDINGS[type];
+  const ang0 = (p.id * 1.7 + p.buildings.length * 1.1) % (Math.PI * 2);
+  const centers = def.needs ? [p.depositPos && p.depositPos[def.needs]].filter(Boolean).map((d) => [d[0], d[1], 1.5, 2.2]) : [[p.x, p.z, 3.3, 7.5]];
+  for (const [cx, cz, r0, r1] of centers) {
+    for (let r = r0; r <= r1; r += 0.6) {
+      for (let k = 0; k < 14; k++) {
+        const a = ang0 + (k * Math.PI * 2) / 14;
+        const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
+        if (!plotError(g, p, type, x, z, ignore)) return { x: Math.round(x * 100) / 100, z: Math.round(z * 100) / 100 };
+      }
+    }
+  }
+  return null;
+}
+
+export function assignSpots(g) {
+  for (const p of g.provs) {
+    for (const b of p.buildings) {
+      if (b.x !== undefined) continue;
+      const s = findSpot(g, p, b.type, b) || { x: p.x + 3.4, z: p.z };
+      b.x = s.x; b.z = s.z;
+    }
+  }
+}
+
+export function startBuild(g, p, type, pos = null) {
+  const err = buildError(g, p, type);
+  if (err) return err;
+  const spot = pos || findSpot(g, p, type);
+  if (!spot) return 'Нет подходящего места';
+  const perr = pos ? plotError(g, p, type, pos.x, pos.z) : null;
+  if (perr) return perr;
+  pay(g.states[p.owner], costOf(type, 1));
+  p.buildings.push({ type, level: 0, buildLeft: BUILDINGS[type].days, target: 1, x: spot.x, z: spot.z });
+  return null;
+}
+
+// производство города за день (по загрузке зданий)
+export function cityProduction(p) {
+  const out = {};
+  for (const k of RES) out[k] = { prod: 0, cons: 0 };
+  for (const b of p.buildings) {
+    if (b.level <= 0) continue;
+    const def = BUILDINGS[b.type], e = b.eff ?? 0;
+    let rich = 1;
+    if (def.needs) rich = p.deposits[def.needs] || 0;
+    if (def.produces) for (const [k, v] of Object.entries(def.produces)) out[k].prod += v * b.level * e * rich;
+    if (def.consumes) for (const [k, v] of Object.entries(def.consumes)) out[k].cons += v * b.level * e;
+  }
+  return out;
+}
+
 export function upgradeError(g, p, i) {
   const b = p.buildings[i];
   if (!b) return 'Нет здания';
@@ -195,6 +266,9 @@ function simulateState(g, s) {
     if (b.level > 0 && b.type === 'electronics') need.steel += BUILDINGS.electronics.consumes.steel * b.level;
   }
   const steelRatio = need.steel > 0 ? Math.min(1, s.steel / need.steel) : 1;
+  let needFuel = 0;
+  for (const p of provs) for (const b of p.buildings) if (b.level > 0 && b.type === 'steelworks') needFuel += BUILDINGS.steelworks.consumes.fuel * b.level;
+  const swRatio = needFuel > 0 ? Math.min(1, s.fuel / needFuel) : 1;
 
   // 4) производство
   for (const p of provs) for (const b of p.buildings) {
@@ -203,6 +277,7 @@ function simulateState(g, s) {
     const grid = def.needs ? Math.max(eRatio, ECON.extractorFloor) : eRatio;
     let eff = staff.get(p.id) * grid;
     if (def.consumes && def.consumes.steel) eff *= steelRatio;
+    if (b.type === 'steelworks') eff *= swRatio;
     let rich = 1;
     if (def.needs === 'steel') rich = p.deposits.steel;
     if (def.needs === 'oil') rich = p.deposits.oil;
@@ -238,6 +313,7 @@ function botWeight(s, p, type) {
     case 'power': return lowE && s.fuel > 60 ? 9 : lowE ? 0.5 : 0.2;
     case 'housing': return s.energy.ratio < 0.7 ? 0.1 : p.pop > housingCap(p) * 0.85 ? 4 : 0.5;
     case 'mine': return s.energy.ratio < 0.7 ? 0.3 : s.steel < 400 ? 4 : s.steel > 3000 ? 0 : 0.5;
+    case 'steelworks': return s.fuel > 500 && s.steel < 1500 && s.energy.ratio > 0.8 ? 2 : 0.05;
     case 'refinery': return s.fuel < 300 ? (lowE ? 8 : 4) : s.fuel > 3000 ? 0 : 0.3;
     case 'electronics':
       if (s.electronics > 400) return 0;
@@ -289,5 +365,6 @@ export function deserialize(text) {
   const world = generateWorld(d.seed);
   const g = { ...d, world, nbrs: world.nbrs, events: [] };
   for (const st of g.states) st.flow ||= emptyFlow();
+  assignSpots(g);
   return g;
 }
