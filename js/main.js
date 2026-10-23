@@ -3,6 +3,7 @@ import {
   SAVE_KEY, canAfford, costOf, deserialize, demolish, newGame, plotError, serialize, startBuild, startUpgrade, tick,
 } from './sim.js';
 import { MapView } from './render.js';
+import { TEX, paintTerrainAsync } from './terrain.js';
 import { slots } from './sim.js';
 import { BUILDINGS, RES_ICON } from './data.js';
 import { buildHtml, cardHtml, cityHtml, fmt, prodHtml, resHtml, resbarHtml, stateHtml, startHtml } from './ui.js';
@@ -36,15 +37,39 @@ function showStart() {
   $('menu').classList.add('hidden');
 }
 
-function begin() {
+function loading(on, title = 'Создаём мир…', pct = 0, text = '') {
+  $('loading').classList.toggle('hidden', !on);
+  if (!on) return;
+  $('load-title').textContent = title;
+  $('load-bar').style.width = Math.round(pct * 100) + '%';
+  if (text) $('load-text').textContent = text;
+}
+const tick1 = () => new Promise((r) => setTimeout(r, 30));
+
+async function startNew(stateId) {
+  $('start').classList.add('hidden');
+  loading(true, 'Создаём мир…', 0.05, 'Рельеф, реки, леса, города, дороги');
+  await tick1();
+  game = newGame({ playerState: stateId, seed: Math.floor(Math.random() * 1e6) });
+  save();
+  await begin();
+}
+
+async function begin() {
   $('start').classList.add('hidden');
   $('menu').classList.add('hidden');
+  loading(true, 'Рисуем землю…', 0.2, 'Текстуры, поля, границы');
+  await tick1();
+  const colors = game.states.map((s) => s.color);
+  const px = await paintTerrainAsync(game.world, colors, TEX, (f) => loading(true, 'Рисуем землю…', 0.2 + 0.7 * f));
+  loading(true, 'Строим города…', 0.95);
+  await tick1();
   if (!view) {
-    view = new MapView($('map'), game, { labels: $('labels') });
+    view = new MapView($('map'), game, { labels: $('labels'), pre: px });
     if (view.webglError) toast('3D недоступно на этом устройстве (нет WebGL). Игра работает без картинки.');
     if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => view && view.resize()).observe($('mapwrap'));
   } else {
-    view.setGame(game);
+    view.setGame(game, px);
     view.resize();
     view.fit();
   }
@@ -56,6 +81,7 @@ function begin() {
   refreshTop();
   const cap = game.provs[game.states[game.playerState].capital];
   select(cap.id, true);
+  loading(false);
   if (!looping) { looping = true; requestAnimationFrame(loop); }
 }
 
@@ -137,7 +163,7 @@ function refreshTop() {
 function refreshPanel() {
   panelDirty = false;
   panelAt = performance.now();
-  const el = $('panel');
+  const el = $('pbody');
   const p = selected >= 0 ? game.provs[selected] : null;
   document.querySelectorAll('#rail [data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
   $('app').classList.toggle('panel-open', !!tab);
@@ -147,10 +173,10 @@ function refreshPanel() {
       : tab === 'build' ? buildHtml(game, p)
         : tab === 'prod' ? prodHtml(game) : tab === 'res' ? resHtml(game) : stateHtml(game);
     el.innerHTML = html;
-    el.classList.remove('hidden');
+    $('panel').classList.remove('hidden');
     el.scrollTop = top;
   } else {
-    el.classList.add('hidden');
+    $('panel').classList.add('hidden');
   }
   if (view && !placing) view.setPins(tab === 'res' ? 'all' : null);
   const pb = $('placebar');
@@ -202,11 +228,12 @@ document.addEventListener('click', (e) => {
   const act = el.dataset.act;
   const prov = selected >= 0 ? game && game.provs[selected] : null;
   if (act === 'pick') {
-    game = newGame({ playerState: Number(el.dataset.id), seed: Math.floor(Math.random() * 1e6) });
-    save();
-    begin();
+    startNew(Number(el.dataset.id));
   } else if (act === 'continue') {
-    try { game = deserialize(localStorage.getItem(SAVE_KEY)); begin(); } catch { toast('Не удалось загрузить сохранение'); }
+    $('start').classList.add('hidden');
+    loading(true, 'Загружаем игру…', 0.05);
+    tick1().then(() => { game = deserialize(localStorage.getItem(SAVE_KEY)); return begin(); })
+      .catch(() => { loading(false); showStart(); toast('Не удалось загрузить сохранение'); });
   } else if (act === 'tab') {
     if (placing) stopPlacing();
     tab = tab === el.dataset.tab ? null : el.dataset.tab;
@@ -258,6 +285,20 @@ document.addEventListener('click', (e) => {
     if (view) view.fit();
   }
 });
+
+{ // ручка шторки (телефон): тап — выше/ниже, свайп вниз — закрыть
+  const grab = $('grab');
+  let y0 = null;
+  grab.addEventListener('pointerdown', (e) => { y0 = e.clientY; grab.setPointerCapture(e.pointerId); });
+  grab.addEventListener('pointerup', (e) => {
+    if (y0 === null) return;
+    const dy = e.clientY - y0; y0 = null;
+    const tall = $('app').classList.contains('sheet-tall');
+    if (dy > 50) { if (tall) $('app').classList.remove('sheet-tall'); else { tab = null; refreshPanel(); } }
+    else if (dy < -50) $('app').classList.add('sheet-tall');
+    else $('app').classList.toggle('sheet-tall');
+  });
+}
 
 $('speeds').addEventListener('click', (e) => {
   const b = e.target.closest('button');

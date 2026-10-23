@@ -298,12 +298,13 @@ export class MapView {
       this.bind();
       this.resize();
     }
-    this.setGame(game);
+    this.setGame(game, opts.pre || null);
   }
 
   // ---- построение мира ----
-  setGame(game) {
+  setGame(game, pre = null) {
     this.g = game;
+    this.pre = pre;
     this.wd = game.world;
     if (this.root) {
       this.scene.remove(this.root);
@@ -359,7 +360,7 @@ export class MapView {
   }
 
   buildTerrain() {
-    const SEG = 240;
+    const SEG = 280;
     const geom = new THREE.PlaneGeometry(SZ, SZ, SEG, SEG);
     geom.rotateX(-Math.PI / 2);
     const P = geom.attributes.position, UV = geom.attributes.uv;
@@ -372,7 +373,7 @@ export class MapView {
     geom.computeBoundingSphere(); geom.computeBoundingBox();
 
     const size = this.texSize || (this.headless ? 128 : TEX);
-    const px = paintTerrain(this.wd, this.g.states.map((s) => s.color), size);
+    const px = this.pre && this.pre.length === size * size * 4 ? this.pre : paintTerrain(this.wd, this.g.states.map((s) => s.color), size);
     const tex = new THREE.DataTexture(new Uint8Array(px.buffer), size, size, THREE.RGBAFormat, THREE.UnsignedByteType);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.generateMipmaps = true;
@@ -392,8 +393,8 @@ export class MapView {
       sh.fragmentShader = sh.fragmentShader
         .replace('void main() {', 'uniform sampler2D detailMap;\nvoid main() {')
         .replace('#include <map_fragment>', `#include <map_fragment>
-          float dn = texture2D(detailMap, vMapUv * 110.0).r;
-          float dm = texture2D(detailMap, vMapUv * 26.0).g;
+          float dn = texture2D(detailMap, vMapUv * 190.0).r;
+          float dm = texture2D(detailMap, vMapUv * 45.0).g;
           diffuseColor.rgb *= 1.0 + (dn - 0.5) * 0.34 + (dm - 0.5) * 0.24;`);
     };
     this.terrain = new THREE.Mesh(geom, m);
@@ -403,7 +404,7 @@ export class MapView {
   buildTrees() {
     const w = this.wd;
     const pines = [], oaks = [], peaks = [], bushes = [];
-    const STEP = 0.42;
+    const STEP = 0.5;
     for (let gz = 0; gz < SZ / STEP; gz++) {
       for (let gx = 0; gx < SZ / STEP; gx++) {
         const k = gz * 1000 + gx;
@@ -411,11 +412,11 @@ export class MapView {
         const hv = gridSample(w.h, x, z);
         if (hv > 0.012 && hv < 0.3) {
           const f = gridSample(w.forest, x, z);
-          if (f > 0.16 && hash(k + 3) < f * 0.95 && pines.length + oaks.length < 9000) {
+          if (f > 0.16 && hash(k + 3) < f * 0.95 && pines.length + oaks.length < 16000) {
             const s = 0.75 + hash(k + 7) * 0.7;
             const t = { x, z, y: surfaceFromH(hv), s, c: hash(k + 11) };
             if (hv > 0.14 || hash(k + 13) < 0.38) pines.push(t); else oaks.push(t);
-          } else if (f < 0.1 && hv > 0.03 && hash(k + 23) < 0.035 && bushes.length < 2500 && gridSample(w.river, x, z) < 0.2) {
+          } else if (f < 0.1 && hv > 0.03 && hash(k + 23) < 0.035 && bushes.length < 4500 && gridSample(w.river, x, z) < 0.2) {
             bushes.push({ x, z, y: surfaceFromH(hv), s: 0.5 + hash(k + 29) * 0.6, c: hash(k + 31) });
           }
         } else if (hv >= 0.3 && hash(k + 17) < Math.min(0.3, (hv - 0.3) * 3)) {
@@ -451,9 +452,47 @@ export class MapView {
   // дороги между городами — настоящие ленты поверх рельефа
   buildRoads() {
     const acc = newAcc();
+    const capSet = new Set(this.wd.provs.filter((p) => p.capital).map((p) => p.id));
+    // кусок ломаной между расстояниями s0..s1
+    const sub = (pts, s0, s1) => {
+      const out = []; let d = 0;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const [ax, az] = pts[i], [bx, bz] = pts[i + 1], l = Math.hypot(bx - ax, bz - az);
+        if (d + l > s0 && d < s1) {
+          const f0 = Math.max(0, (s0 - d) / l), f1 = Math.min(1, (s1 - d) / l);
+          if (!out.length) out.push([ax + (bx - ax) * f0, az + (bz - az) * f0]);
+          out.push([ax + (bx - ax) * f1, az + (bz - az) * f1]);
+        }
+        d += l;
+      }
+      return out;
+    };
     for (const r of this.wd.roads) {
-      addStrip(acc, this.wd, r.pts, 0.34, 0.05, 0x5d5446);
-      addStrip(acc, this.wd, r.pts, 0.22, 0.062, 0x9a8a70);
+      const major = capSet.has(r.a) || capSet.has(r.b);
+      addStrip(acc, this.wd, r.pts, major ? 0.46 : 0.34, 0.05, major ? 0x2e3236 : 0x5d5446);   // обочина
+      addStrip(acc, this.wd, r.pts, major ? 0.34 : 0.22, 0.062, major ? 0x4a4f55 : 0x9a8a70);  // полотно
+      let total = 0;
+      for (let i = 1; i < r.pts.length; i++) total += Math.hypot(r.pts[i][0] - r.pts[i - 1][0], r.pts[i][1] - r.pts[i - 1][1]);
+      if (major) for (let s = 0.6; s < total - 0.9; s += 0.8) {
+        const d = sub(r.pts, s, s + 0.4);
+        if (d.length > 1) addStrip(acc, this.wd, d, 0.035, 0.074, 0xe8e2c0);
+      }
+      // мосты: настил там, где дорога пересекает реку
+      let from = -1;
+      for (let s = 0; s <= total + 0.001; s += 0.2) {
+        const q = sub(r.pts, s, s + 0.01), pt = q[0];
+        const wet = pt && gridSample(this.wd.river, pt[0], pt[1]) > 0.3;
+        if (wet && from < 0) from = s;
+        if (!wet && from >= 0) {
+          const d = sub(r.pts, Math.max(0, from - 0.25), s + 0.25);
+          if (d.length > 1) {
+            addStrip(acc, this.wd, d, 0.52, 0.09, 0x6b5d49);
+            addStrip(acc, this.wd, d, 0.40, 0.1, major ? 0x4a4f55 : 0x9a8a70);
+            addStrip(acc, this.wd, d, 0.56, 0.085, 0x2d2a26);
+          }
+          from = -1;
+        }
+      }
     }
     const m = stripMesh(acc);
     if (m) this.root.add(m);

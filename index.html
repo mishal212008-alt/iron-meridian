@@ -34,7 +34,7 @@
         <div id="card" class="hidden"></div>
         <div id="placebar" class="hidden"></div>
       </div>
-      <aside id="panel" class="hidden"></aside>
+      <aside id="panel" class="hidden"><div id="grab" aria-label="Потяни, чтобы изменить размер"><i></i></div><div id="pbody"></div></aside>
       <nav id="rail">
         <button data-act="tab" data-tab="city"><span class="ni">🏙️</span><span>Город</span></button>
         <button data-act="tab" data-tab="build"><span class="ni">🏗️</span><span>Строить</span></button>
@@ -48,6 +48,14 @@
   </div>
 
   <div id="start" class="overlay"></div>
+
+  <div id="loading" class="overlay hidden">
+    <div class="menu-box">
+      <h2 id="load-title">Создаём мир…</h2>
+      <div class="bar"><div id="load-bar" class="ok" style="width:0"></div></div>
+      <p id="load-text" class="muted">Рельеф, реки, леса, города, дороги</p>
+    </div>
+  </div>
 
   <div id="menu" class="overlay hidden">
     <div class="menu-box">

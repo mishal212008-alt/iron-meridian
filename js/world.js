@@ -2,7 +2,7 @@
 // территориями государств и дорогами. Без DOM, работает в node.
 import { NAMES, STATES_DEF } from './data.js';
 
-export const WORLD = { SZ: 80, HALF: 40, N: 256 };
+export const WORLD = { SZ: 140, HALF: 70, N: 352 };
 const { SZ, HALF, N } = WORLD;
 export const CELL = SZ / N;
 export const HEIGHT_SCALE = 9; // высота рельефа в единицах сцены на 1.0 «высоты»
@@ -124,11 +124,11 @@ export function generateWorld(seed) {
   for (let j = 0; j < N; j++) {
     for (let i = 0; i < N; i++) {
       const x = fromGrid(i), z = fromGrid(j);
-      const wx = x + (nz2.fbm(x * 0.05 + 7, z * 0.05, 3) - 0.5) * 16;
-      const wz = z + (nz2.fbm(x * 0.05, z * 0.05 + 9, 3) - 0.5) * 16;
+      const wx = x + (nz2.fbm(x * 0.04 + 7, z * 0.04, 3) - 0.5) * 24;
+      const wz = z + (nz2.fbm(x * 0.04, z * 0.04 + 9, 3) - 0.5) * 24;
       const d = Math.hypot(wx, wz) / (HALF * 0.9);
       const mask = 1 - Math.pow(d, 1.7);
-      const base = nz.fbm(x * 0.05 + ox, z * 0.05 + oz, 5);
+      const base = nz.fbm(x * 0.04 + ox, z * 0.04 + oz, 5);
       raw[j * N + i] = base * 0.62 + mask * 0.62;
     }
   }
@@ -145,7 +145,7 @@ export function generateWorld(seed) {
       const k = j * N + i;
       if (h[k] <= 0) continue;
       const x = fromGrid(i), z = fromGrid(j);
-      const r = 1 - Math.abs(2 * nz3.fbm(x * 0.07 + 20, z * 0.07 + 5, 3) - 1);
+      const r = 1 - Math.abs(2 * nz3.fbm(x * 0.055 + 20, z * 0.055 + 5, 3) - 1);
       h[k] += Math.pow(r, 4) * 0.3 * smoothstep(0.06, 0.15, h[k]);
     }
   }
@@ -180,11 +180,11 @@ export function generateWorld(seed) {
   {
     const cand = [];
     for (let k = 0; k < N * N; k++) if (onMain(k) && h[k] > 0.13 && h[k] < 0.3) cand.push(k);
-    for (let t = 0; t < 400 && riverPaths.length < 7 && cand.length; t++) {
+    for (let t = 0; t < 900 && riverPaths.length < 14 && cand.length; t++) {
       let cur = cand[Math.floor(rng() * cand.length)];
       const seen = new Set([cur]); const path = [cur];
       let reached = false;
-      for (let step = 0; step < 600; step++) {
+      for (let step = 0; step < 1000; step++) {
         const cx = cur % N, cy = (cur / N) | 0;
         let best = -1, bestH = 1e9;
         for (const [dx, dy] of DIRS8) {
@@ -199,8 +199,8 @@ export function generateWorld(seed) {
         cur = best; seen.add(cur); path.push(cur);
         if (h[cur] <= 0) { reached = true; break; }
       }
-      const far = path.length > 1 && Math.hypot(path[0] % N - cur % N, ((path[0] / N) | 0) - ((cur / N) | 0)) > 35;
-      if (reached && far && path.length < 420) riverPaths.push(path);
+      const far = path.length > 1 && Math.hypot(path[0] % N - cur % N, ((path[0] / N) | 0) - ((cur / N) | 0)) > 60;
+      if (reached && far && path.length < 900) riverPaths.push(path);
     }
     for (const path of riverPaths) {
       path.forEach((k, idx) => {
@@ -226,8 +226,8 @@ export function generateWorld(seed) {
     cands.push(k);
   }
   const cities = [];
-  const target = 36;
-  for (let minD = 8.2; minD >= 5.4 && cities.length < target; minD -= 0.6) {
+  const target = 64;
+  for (let minD = 10.5; minD >= 7.2 && cities.length < target; minD -= 0.6) {
     for (let tries = 0; tries < 5000 && cities.length < target; tries++) {
       const k = cands[Math.floor(rng() * cands.length)];
       const x = fromGrid(k % N), z = fromGrid((k / N) | 0);
@@ -416,8 +416,8 @@ export function generateWorld(seed) {
     const ra = find(a), rb = find(b);
     const inTree = ra !== rb;
     if (inTree) uf[ra] = rb;
-    if (!inTree && d > 12.5) continue;
-    if (d > 20) continue;
+    if (!inTree && d > 15) continue;
+    if (d > 32) continue;
     const path = findRoad(world, provs[a], provs[b]);
     if (path) world.roads.push({ a, b, pts: path });
   }
@@ -435,7 +435,7 @@ function findRoad(w, A, B) {
   const octile = (x, y) => { const dx = Math.abs(x - ex), dy = Math.abs(y - ey); return Math.max(dx, dy) + 0.414 * Math.min(dx, dy); };
   heap.push(octile(sx, sy), start);
   let found = false, iter = 0;
-  while (heap.size && iter++ < 60000) {
+  while (heap.size && iter++ < 160000) {
     const [, cur] = heap.pop();
     if (cur === goal) { found = true; break; }
     const cx = cur % N, cy = (cur / N) | 0;

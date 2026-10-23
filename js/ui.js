@@ -286,11 +286,20 @@ export function stateHtml(g) {
 export function cardHtml(g, p) {
   const owner = g.states[p.owner];
   const mine = p.owner === g.playerState;
+  const s = g.states[g.playerState];
+  let qb = '';
+  if (mine) {
+    qb = '<div class="qb">' + BUILD_ORDER.map((t) => {
+      const d = BUILDINGS[t], c = costOf(t, 1), ok = canAfford(s, c);
+      return `<button class="qbtn" data-act="place" data-type="${t}" ${ok ? '' : 'disabled'}><span class="qi">${d.icon}</span><span class="qn">${d.name.split(' ')[0]}</span><span class="qc">💰${fmt(c.money)}</span></button>`;
+    }).join('') + '</div>';
+  }
   return `<div class="card-main">
-      <div><b>${p.capital ? '★ ' : ''}${p.name}</b><div class="sub">${dot(owner.color)}${owner.name} · ${cityName(p)} · ${fmt(p.pop)} чел.</div></div>
+      <div><b>${p.capital ? '★ ' : ''}${p.name}</b><div class="sub">${dot(owner.color)}${owner.name} · ${cityName(p)} · ${fmt(p.pop)} чел. · зданий ${p.buildings.length}/${slots(p)}</div></div>
       <button class="x" data-act="card-close" aria-label="Закрыть">✕</button>
     </div>
-    <div class="card-btns"><button class="btn small" data-act="tab" data-tab="city">Подробно</button>${mine ? '<button class="btn small" data-act="tab" data-tab="build">🏗️ Строить</button>' : ''}</div>`;
+    ${qb}
+    <div class="card-btns"><button class="btn small" data-act="tab" data-tab="city">Подробно</button>${mine ? '<button class="btn small ghost" data-act="tab" data-tab="build">Каталог</button>' : ''}</div>`;
 }
 
 export function startHtml(hasSave) {

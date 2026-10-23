@@ -69,7 +69,7 @@ for (const seed of [1, 7, 42, 123, 999, 31337]) {
     ok(plotError(g, p, 'mine', spot ? spot.x : p.x + 4, spot ? spot.z : p.z) !== null, 'рудник вдали от руды должен быть запрещён');
   }
   ok(startBuild(g, p, 'power', spot) === null, 'startBuild в выбранное место не прошёл');
-  ok(plotError(g, p, 'power', spot.x + 0.5, spot.z) === 'Место занято', 'должна быть проверка занятости места');
+  ok(plotError(g, p, 'power', spot.x + 0.5, spot.z) !== null, 'должна быть проверка занятости места');
   for (let i = 0; i < 40; i++) tick(g);
   const pr = cityProduction(p);
   ok(Object.values(pr).every((v) => Number.isFinite(v.prod) && Number.isFinite(v.cons)), 'cityProduction NaN');

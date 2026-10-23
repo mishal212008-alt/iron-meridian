@@ -3,7 +3,7 @@
 import { CELL, WORLD, gridSample, mulberry32, smoothstep, territoryAt } from './world.js';
 
 const { N, HALF, SZ } = WORLD;
-export const TEX = 1024;
+export const TEX = 1536;
 
 const hexRgb = (s) => [parseInt(s.slice(1, 3), 16), parseInt(s.slice(3, 5), 16), parseInt(s.slice(5, 7), 16)];
 const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
@@ -42,7 +42,7 @@ function hillshade(h) {
   return out;
 }
 
-export function paintTerrain(world, stateColors, tex = TEX) {
+export function makePainter(world, stateColors, tex = TEX) {
   const { h, river, forest, pid, pm, sm, provs, roads, owner } = world;
   const shade = hillshade(h);
   const px = new Uint8ClampedArray(tex * tex * 4);
@@ -51,7 +51,8 @@ export function paintTerrain(world, stateColors, tex = TEX) {
   const fieldAngle = provs.map((p) => hash2(p.id, 7, 3) * Math.PI);
   const fieldReach = provs.map((p) => 5.5 + hash2(p.id, 11, 5) * 2.5);
 
-  for (let r = 0; r < tex; r++) {
+  const rows = (r0, r1) => {
+  for (let r = r0; r < r1; r++) {
     const z = -HALF + ((r + 0.5) * SZ) / tex;
     for (let c = 0; c < tex; c++) {
       const x = -HALF + ((c + 0.5) * SZ) / tex;
@@ -79,6 +80,13 @@ export function paintTerrain(world, stateColors, tex = TEX) {
         rgb = mix(rgb, C.hill, smoothstep(0.12, 0.2, hv));
         rgb = mix(rgb, C.rock, smoothstep(0.2, 0.3, hv + (n2 - 0.5) * 0.06));
         rgb = mix(rgb, C.snow, smoothstep(0.38, 0.47, hv + (n1 - 0.5) * 0.04));
+        // степные пятна и скалы на крутых склонах
+        const patch = nz(x * 0.12 + 40, z * 0.12 - 7);
+        rgb = mix(rgb, [150, 150, 88], smoothstep(0.55, 0.8, patch) * 0.45 * (1 - smoothstep(0.1, 0.2, hv)));
+        rgb = mix(rgb, [86, 138, 78], smoothstep(0.55, 0.2, patch) * 0.25);
+        const e = 0.25;
+        const slope = Math.hypot(gridSample(h, x + e, z) - gridSample(h, x - e, z), gridSample(h, x, z + e) - gridSample(h, x, z - e)) / (2 * e);
+        rgb = mix(rgb, C.rock, smoothstep(0.1, 0.28, slope + (n2 - 0.5) * 0.05) * 0.8);
         rgb = [rgb[0] * vari, rgb[1] * vari, rgb[2] * vari];
         // пляж
         const beach = 1 - smoothstep(0.004, 0.026, hv);
@@ -126,6 +134,8 @@ export function paintTerrain(world, stateColors, tex = TEX) {
       px[o] = rgb[0]; px[o + 1] = rgb[1]; px[o + 2] = rgb[2]; px[o + 3] = 255;
     }
   }
+  };
+  const finish = () => {
 
   // дороги
   const stamp = (x, z, rad, color, a) => {
@@ -162,6 +172,25 @@ export function paintTerrain(world, stateColors, tex = TEX) {
     }
   }
   return px;
+  };
+  return { rows, finish, tex };
+}
+
+export function paintTerrain(world, stateColors, tex = TEX) {
+  const pt = makePainter(world, stateColors, tex);
+  pt.rows(0, tex);
+  return pt.finish();
+}
+
+export async function paintTerrainAsync(world, stateColors, tex = TEX, onProgress = null) {
+  const pt = makePainter(world, stateColors, tex);
+  const step = Math.max(8, Math.floor(tex / 32));
+  for (let r = 0; r < tex; r += step) {
+    pt.rows(r, Math.min(tex, r + step));
+    if (onProgress) onProgress(r / tex);
+    await new Promise((res) => setTimeout(res, 0));
+  }
+  return pt.finish();
 }
 
 // мелкая повторяющаяся текстура-«шум»: накладывается на землю, чтобы вблизи не было мыла
@@ -186,7 +215,7 @@ export function makeDetail(size = 128) {
 }
 
 // маска выбранной провинции (маленькая текстура поверх карты)
-export const SEL_TEX = 256;
+export const SEL_TEX = 384;
 export function paintSelection(world, id, size = SEL_TEX) {
   const px = new Uint8ClampedArray(size * size * 4);
   if (id < 0) return px;

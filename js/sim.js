@@ -309,6 +309,7 @@ function simulateState(g, s) {
 
 function botWeight(s, p, type) {
   const lowE = s.energy.ratio < 0.95;
+  if (s.energy.ratio < 0.8 && type !== 'power') return 0.03; // сначала энергия
   switch (type) {
     case 'power': return lowE && s.fuel > 60 ? 9 : lowE ? 0.5 : 0.2;
     case 'housing': return s.energy.ratio < 0.7 ? 0.1 : p.pop > housingCap(p) * 0.85 ? 4 : 0.5;
@@ -323,6 +324,7 @@ function botWeight(s, p, type) {
 }
 
 function botStep(g, s) {
+  if (s.energy.ratio < 0.8 && !canAfford(s, costOf('power', 1))) return; // копим на электростанцию
   const provs = stateProvs(g, s.id);
   const cands = [];
   for (const p of provs) {
