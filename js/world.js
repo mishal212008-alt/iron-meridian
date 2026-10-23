@@ -1,6 +1,6 @@
 // Генерация мира: один цельный материк с рельефом, морем, реками, лесами, городами,
 // территориями государств и дорогами. Без DOM, работает в node.
-import { NAMES, STATES_DEF } from './data.js';
+import { DEPOSIT_KINDS, NAMES, STATES_DEF } from './data.js';
 
 export const WORLD = { SZ: 140, HALF: 70, N: 352 };
 const { SZ, HALF, N } = WORLD;
@@ -332,7 +332,7 @@ export function generateWorld(seed) {
   const provs = cities.map((c, id) => ({
     id, x: c.x, z: c.z, name: names[id % names.length],
     terrain: 'plains', coastal: false,
-    deposits: { steel: 0, oil: 0 }, depositPos: {},
+    deposits: { steel: 0, oil: 0, gold: 0, rare: 0 }, depositPos: {},
     owner: owner[id], capital: caps.includes(id), pop: 0, cityLevel: 0, buildings: [],
   }));
   world.provs = provs; world.pid = pid; world.pm = pm; world.sm = sm;
@@ -356,34 +356,56 @@ export function generateWorld(seed) {
     const mountShare = cells.length ? hi / cells.length : 0;
     const far = cells.filter((k) => Math.hypot(fromGrid(k % N) - p.x, fromGrid((k / N) | 0) - p.z) > 3.4);
     p._far = far;
-    const r1 = rng(), r2 = rng(), r3 = rng();
-    if (r1 < 0.12 + mountShare * 1.6 + (p.terrain === 'hills' ? 0.2 : 0)) p.deposits.steel = r3 < 0.3 ? 2 : 1;
-    if (r2 < (p.terrain === 'hills' ? 0.1 : 0.27)) p.deposits.oil = r3 > 0.7 ? 2 : 1;
+    p._mount = mountShare;
   }
-  // гарантия: у каждого государства есть сталь и нефть
-  STATES_DEF.forEach((s, i) => {
-    const mine = provs.filter((p) => p.owner === i).sort((a, b) =>
-      Math.hypot(a.x - provs[caps[i]].x, a.z - provs[caps[i]].z) - Math.hypot(b.x - provs[caps[i]].x, b.z - provs[caps[i]].z));
-    for (const kind of ['steel', 'oil']) {
-      if (!mine.some((p) => p.deposits[kind] > 0)) mine[Math.min(1, mine.length - 1)].deposits[kind] = 1;
+  // месторождения по профилю государства: 'A' — богатые недра, 'S' — одно скромное, 0 — нет
+  const AFF = {
+    steel: (p) => p._mount * 3 + (p.terrain === 'hills' ? 0.6 : 0),
+    oil: (p) => (p.terrain === 'hills' ? 0.3 : 1) - p._mount * 2 + (p.terrain === 'coast' ? 0.2 : 0),
+    gold: (p) => p._mount * 1.6 + (p.terrain === 'hills' ? 0.9 : 0),
+    rare: (p) => p._mount * 2.4 + (p.terrain === 'hills' ? 0.5 : 0),
+  };
+  STATES_DEF.forEach((sd, i) => {
+    const cp = provs[caps[i]];
+    const mine = provs.filter((p) => p.owner === i);
+    const byCap = [...mine].sort((a, b) => Math.hypot(a.x - cp.x, a.z - cp.z) - Math.hypot(b.x - cp.x, b.z - cp.z));
+    const near = new Set(byCap.slice(0, 9).map((p) => p.id));
+    for (const kind of DEPOSIT_KINDS) {
+      const prof = sd.deposits[kind];
+      if (!prof) continue;
+      const taken = (p) => DEPOSIT_KINDS.some((k) => p.deposits[k] > 0) ? 1.4 : 0;
+      const scored = mine.map((p) => ({ p, sc: AFF[kind](p) - taken(p) + rng() * 0.7 + (p.capital ? -0.6 : 0) }));
+      scored.sort((a, b) => b.sc - a.sc);
+      if (prof === 'S') {
+        const pick = scored.find((e) => near.has(e.p.id)) || scored[0];
+        pick.p.deposits[kind] = 1;
+      } else {
+        const n = Math.max(3, Math.min(6, Math.round(mine.length * 0.26)));
+        const chosen = scored.slice(0, n);
+        if (!chosen.some((e) => near.has(e.p.id))) chosen[chosen.length - 1] = scored.find((e) => near.has(e.p.id)) || chosen[chosen.length - 1];
+        chosen.forEach((e, k) => { e.p.deposits[kind] = k === 0 || rng() < 0.25 ? 2 : 1; });
+      }
     }
   });
-  // точки месторождений: руда — выше, нефть — на равнинах
+  // точки месторождений: руда и золото — выше, нефть — на равнинах
+  const SCORE = { steel: (v) => v, oil: (v) => -Math.abs(v - 0.07), gold: (v) => v * 0.7, rare: (v) => v };
   for (const p of provs) {
     const far = p._far.length ? p._far : cellsOf[p.id];
-    delete p._far;
+    delete p._far; delete p._mount;
     if (!far.length) continue;
-    const pick = (score) => {
-      let bestK = far[0], bestS = -1e9;
-      for (let t = 0; t < 40; t++) {
+    const used = [];
+    for (const kind of DEPOSIT_KINDS) {
+      if (!p.deposits[kind]) continue;
+      let best = null, bestS = -1e9;
+      for (let t = 0; t < 60; t++) {
         const k = far[Math.floor(rng() * far.length)];
-        const s = score(h[k]) + rng() * 0.05;
-        if (s > bestS) { bestS = s; bestK = k; }
+        const x = fromGrid(k % N), z = fromGrid((k / N) | 0);
+        let sc = SCORE[kind](h[k]) + rng() * 0.05;
+        if (used.some((u) => Math.hypot(u[0] - x, u[1] - z) < 2.4)) sc -= 5;
+        if (sc > bestS) { bestS = sc; best = [Math.round(x * 100) / 100, Math.round(z * 100) / 100]; }
       }
-      return [Math.round(fromGrid(bestK % N) * 100) / 100, Math.round(fromGrid((bestK / N) | 0) * 100) / 100];
-    };
-    if (p.deposits.steel) p.depositPos.steel = pick((v) => v);
-    if (p.deposits.oil) p.depositPos.oil = pick((v) => -Math.abs(v - 0.07));
+      p.depositPos[kind] = best; used.push(best);
+    }
   }
   provs.forEach((p) => { p.pop = p.capital ? 3000 : 500 + Math.floor(rng() * 500); });
 
@@ -421,7 +443,106 @@ export function generateWorld(seed) {
     const path = findRoad(world, provs[a], provs[b]);
     if (path) world.roads.push({ a, b, pts: path });
   }
+
+  // 12. государственные границы (ломаные) и КПП на дорогах
+  computeBorders(world);
   return world;
+}
+
+const ownerAt = (w, x, z) => (isLand(w, x, z) ? territoryAt(w, x, z)[3] : -1);
+
+// ломаные линии границ между государствами: marching squares по решётке 0.5
+function computeBorders(world) {
+  const S = 0.5, M = Math.floor(world.SZ / S) + 1, H0 = -world.HALF;
+  const own = new Int8Array(M * M);
+  for (let j = 0; j < M; j++) for (let i = 0; i < M; i++) own[j * M + i] = ownerAt(world, H0 + i * S, H0 + j * S);
+  const nodes = [], cache = new Map();
+  const edgeNode = (i0, j0, i1, j1) => {
+    if (j1 < j0 || (j1 === j0 && i1 < i0)) [i0, j0, i1, j1] = [i1, j1, i0, j0];
+    const key = i0 + ',' + j0 + ',' + i1 + ',' + j1;
+    if (cache.has(key)) return cache.get(key);
+    const o0 = own[j0 * M + i0], o1 = own[j1 * M + i1];
+    let ax = H0 + i0 * S, az = H0 + j0 * S, bx = H0 + i1 * S, bz = H0 + j1 * S;
+    for (let k = 0; k < 7; k++) {
+      const mx = (ax + bx) / 2, mz = (az + bz) / 2;
+      if (ownerAt(world, mx, mz) === o0) { ax = mx; az = mz; } else { bx = mx; bz = mz; }
+    }
+    const n = { id: nodes.length, x: (ax + bx) / 2, z: (az + bz) / 2, a: Math.min(o0, o1), b: Math.max(o0, o1), adj: [] };
+    nodes.push(n); cache.set(key, n);
+    return n;
+  };
+  const link = (p, q) => { if (p !== q && !p.adj.includes(q)) { p.adj.push(q); q.adj.push(p); } };
+  for (let j = 0; j < M - 1; j++) {
+    for (let i = 0; i < M - 1; i++) {
+      const c = [own[j * M + i], own[j * M + i + 1], own[(j + 1) * M + i + 1], own[(j + 1) * M + i]];
+      const ij = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]];
+      const cr = [];
+      for (let e = 0; e < 4; e++) {
+        const f = (e + 1) % 4;
+        if (c[e] !== c[f] && c[e] >= 0 && c[f] >= 0) cr.push(edgeNode(ij[e][0], ij[e][1], ij[f][0], ij[f][1]));
+      }
+      if (cr.length === 2) link(cr[0], cr[1]);
+      else if (cr.length > 2) {
+        const mid = { id: nodes.length, x: cr.reduce((a, n) => a + n.x, 0) / cr.length, z: cr.reduce((a, n) => a + n.z, 0) / cr.length, a: 9, b: 9, adj: [] };
+        nodes.push(mid);
+        for (const n of cr) link(mid, n);
+      }
+    }
+  }
+  const seen = new Set(), borders = [];
+  const walk = (start, first) => {
+    const pts = [start]; let prev = start, cur = first;
+    seen.add(start.id + '>' + first.id); seen.add(first.id + '>' + start.id);
+    for (;;) {
+      pts.push(cur);
+      if (cur.adj.length !== 2) break;
+      const nxt = cur.adj[0] === prev ? cur.adj[1] : cur.adj[0];
+      if (seen.has(cur.id + '>' + nxt.id)) { if (nxt === pts[0]) pts.push(nxt); break; }
+      seen.add(cur.id + '>' + nxt.id); seen.add(nxt.id + '>' + cur.id);
+      prev = cur; cur = nxt;
+    }
+    return pts;
+  };
+  const emit = (pts) => {
+    if (pts.length < 3) return;
+    const pair = pts.find((n) => n.a !== 9) || pts[0];
+    let q = pts.map((n) => [n.x, n.z]);
+    for (let it = 0; it < 1; it++) { // сглаживание
+      const out = [q[0]];
+      for (let k = 0; k < q.length - 1; k++) {
+        out.push([q[k][0] * 0.75 + q[k + 1][0] * 0.25, q[k][1] * 0.75 + q[k + 1][1] * 0.25], [q[k][0] * 0.25 + q[k + 1][0] * 0.75, q[k][1] * 0.25 + q[k + 1][1] * 0.75]);
+      }
+      out.push(q[q.length - 1]); q = out;
+    }
+    borders.push({ a: pair.a, b: pair.b, pts: q.map(([x, z]) => [Math.round(x * 100) / 100, Math.round(z * 100) / 100]) });
+  };
+  for (const n of nodes) if (n.adj.length !== 2) for (const m of n.adj) if (!seen.has(n.id + '>' + m.id)) emit(walk(n, m));
+  for (const n of nodes) if (n.adj.length === 2) for (const m of n.adj) if (!seen.has(n.id + '>' + m.id)) emit(walk(n, m));
+  world.borders = borders;
+
+  // КПП: где дорога пересекает границу
+  const cps = [];
+  world.roads.forEach((r, ri) => {
+    let s = 0, prevO = null, prevP = null;
+    for (let i = 0; i < r.pts.length - 1; i++) {
+      const [ax, az] = r.pts[i], [bx, bz] = r.pts[i + 1], l = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(l / 0.15));
+      for (let k = 0; k <= n; k++) {
+        const f = k / n, x = ax + (bx - ax) * f, z = az + (bz - az) * f, o = ownerAt(world, x, z);
+        if (prevO !== null && o >= 0 && prevO >= 0 && o !== prevO) {
+          let lx = prevP[0], lz = prevP[1], hx = x, hz = z;
+          for (let t = 0; t < 8; t++) { const mx = (lx + hx) / 2, mz = (lz + hz) / 2; if (ownerAt(world, mx, mz) === prevO) { lx = mx; lz = mz; } else { hx = mx; hz = mz; } }
+          const cx = (lx + hx) / 2, cz = (lz + hz) / 2, a = Math.min(o, prevO), b = Math.max(o, prevO);
+          if (!cps.some((c) => c.a === a && c.b === b && Math.hypot(c.x - cx, c.z - cz) < 2.5)) {
+            const tl = Math.hypot(bx - ax, bz - az) || 1;
+            cps.push({ id: cps.length, x: Math.round(cx * 100) / 100, z: Math.round(cz * 100) / 100, a, b, tx: (bx - ax) / tl, tz: (bz - az) / tl, road: ri, s: Math.round((s + l * f) * 100) / 100 });
+          }
+        }
+        if (o >= 0) { prevO = o; prevP = [x, z]; }
+      }
+      s += l;
+    }
+  });
+  world.checkpoints = cps;
 }
 
 function findRoad(w, A, B) {

@@ -1,29 +1,33 @@
 // Симуляция без DOM: её можно гонять в node и использовать ботам.
 import {
-  BUILDINGS, BUILD_ORDER, CITY_LEVELS, ECON, LEVEL_COST_MULT, MAX_LEVEL, RES, START, STATES_DEF,
+  BUILDINGS, BUILD_ORDER, CITY_LEVELS, DEPOSITS, ECON, LEVEL_COST_MULT, MAX_LEVEL, RES, START, STATES_DEF,
 } from './data.js';
+import { botDiplomacy, initDiplomacy, stepDiplomacy } from './diplomacy.js';
 import { generateWorld, gridSample, territoryAt } from './world.js';
 
-export const SAVE_KEY = 'iron-meridian-save-v2';
+export const SAVE_KEY = 'iron-meridian-save-v3';
 
-const emptyFlow = () => ({ money: { prod: 0, cons: 0 }, steel: { prod: 0, cons: 0 }, fuel: { prod: 0, cons: 0 }, electronics: { prod: 0, cons: 0 } });
+const emptyFlow = () => Object.fromEntries(RES.map((k) => [k, { prod: 0, cons: 0 }]));
+const zeroRes = () => Object.fromEntries(RES.map((k) => [k, 0]));
 
 export function newGame({ seed = Date.now() % 1000000, playerState = 0, difficulty = 'normal' } = {}) {
   const world = generateWorld(seed);
   const g = {
-    v: 2, seed, day: 1, difficulty, playerState,
+    v: 3, seed, day: 1, difficulty, playerState,
     states: STATES_DEF.map((s, i) => ({
       id: i, name: s.name, color: s.color, isPlayer: i === playerState,
       capital: world.capitals[i],
       ...START,
       energy: { supply: 0, demand: 0, ratio: 1 },
-      rate: { money: 0, steel: 0, fuel: 0, electronics: 0 },
+      rate: zeroRes(),
+      trade: zeroRes(),
       flow: emptyFlow(),
     })),
     provs: world.provs,
     events: [],
   };
   g.world = world; g.nbrs = world.nbrs;
+  initDiplomacy(g);
   // стартовые здания в столицах
   for (const s of g.states) {
     const cap = g.provs[s.capital];
@@ -31,9 +35,9 @@ export function newGame({ seed = Date.now() % 1000000, playerState = 0, difficul
     addDone(cap, 'power', 1);
     cap.cityLevel = levelOf(cap.pop);
     // рудник/НПЗ — в ближайшей своей провинции с месторождением
-    for (const kind of [['mine', 'steel'], ['refinery', 'oil']]) {
-      const spot = g.provs.filter((p) => p.owner === s.id && p.deposits[kind[1]] > 0 && p.buildings.length < slots(p))[0];
-      if (spot) addDone(spot, kind[0], 1);
+    for (const kind of ['steel', 'oil']) {
+      const spot = g.provs.filter((p) => p.owner === s.id && p.deposits[kind] > 0 && p.buildings.length < slots(p))[0];
+      if (spot) addDone(spot, DEPOSITS[kind].building, 1);
     }
   }
   assignSpots(g);
@@ -86,8 +90,7 @@ export function buildError(g, p, type) {
   const s = g.states[p.owner];
   const b = BUILDINGS[type];
   if (p.buildings.length >= slots(p)) return 'Нет свободных мест';
-  if (b.needs === 'steel' && !p.deposits.steel) return 'Нужно месторождение руды';
-  if (b.needs === 'oil' && !p.deposits.oil) return 'Нужно месторождение нефти';
+  if (b.needs && !p.deposits[b.needs]) return `Нужно месторождение: ${DEPOSITS[b.needs].name.toLowerCase()}`;
   if (!canAfford(s, costOf(type, 1))) return 'Не хватает ресурсов';
   return null;
 }
@@ -108,7 +111,7 @@ export function plotError(g, p, type, x, z, ignore = null) {
   if (def.needs) {
     const d = dep[def.needs];
     if (!p.deposits[def.needs] || !d) return 'Нет месторождения';
-    if (Math.hypot(d[0] - x, d[1] - z) > PLOT.depositReach) return def.needs === 'steel' ? 'Рудник — рядом с рудой' : 'НПЗ — рядом с нефтью';
+    if (Math.hypot(d[0] - x, d[1] - z) > PLOT.depositReach) return `${def.name} — рядом с месторождением (${DEPOSITS[def.needs].name.toLowerCase()})`;
   } else {
     for (const d of Object.values(dep)) if (Math.hypot(d[0] - x, d[1] - z) < PLOT.depositKeep) return 'Оставьте месторождение для добычи';
   }
@@ -217,15 +220,20 @@ export function tick(g) {
   }
 
   for (const s of g.states) simulateState(g, s);
+  stepDiplomacy(g);
+  for (const s of g.states) for (const k of RES) if (s.trade && s.trade[k]) s.rate[k] += s.trade[k];
 
   if (g.day % 4 === 0) {
     for (const s of g.states) if (!s.isPlayer) botStep(g, s);
+  }
+  if (g.day % 3 === 0) {
+    for (const s of g.states) if (!s.isPlayer) botDiplomacy(g, s);
   }
 }
 
 function simulateState(g, s) {
   const provs = stateProvs(g, s.id);
-  const before = { money: s.money, steel: s.steel, fuel: s.fuel, electronics: s.electronics };
+  const before = Object.fromEntries(RES.map((k) => [k, s[k]]));
   const flow = emptyFlow();
 
   // занятость
@@ -260,15 +268,14 @@ function simulateState(g, s) {
   const eRatio = demand > 0 ? Math.min(1, supply / demand) : 1;
   s.energy = { supply, demand, ratio: eRatio };
 
-  // 3) сырьё для производств
-  const need = { steel: 0 };
+  // 3) сырьё для производств: хватает ли склада на всё, что хотят потребить
+  const need = {};
   for (const p of provs) for (const b of p.buildings) {
-    if (b.level > 0 && b.type === 'electronics') need.steel += BUILDINGS.electronics.consumes.steel * b.level;
+    if (b.level <= 0 || b.type === 'power') continue;
+    const cons = BUILDINGS[b.type].consumes;
+    if (cons) for (const [k, v] of Object.entries(cons)) need[k] = (need[k] || 0) + v * b.level;
   }
-  const steelRatio = need.steel > 0 ? Math.min(1, s.steel / need.steel) : 1;
-  let needFuel = 0;
-  for (const p of provs) for (const b of p.buildings) if (b.level > 0 && b.type === 'steelworks') needFuel += BUILDINGS.steelworks.consumes.fuel * b.level;
-  const swRatio = needFuel > 0 ? Math.min(1, s.fuel / needFuel) : 1;
+  const ratioOf = (k) => (need[k] > 0 ? Math.min(1, s[k] / need[k]) : 1);
 
   // 4) производство
   for (const p of provs) for (const b of p.buildings) {
@@ -276,11 +283,8 @@ function simulateState(g, s) {
     const def = BUILDINGS[b.type];
     const grid = def.needs ? Math.max(eRatio, ECON.extractorFloor) : eRatio;
     let eff = staff.get(p.id) * grid;
-    if (def.consumes && def.consumes.steel) eff *= steelRatio;
-    if (b.type === 'steelworks') eff *= swRatio;
-    let rich = 1;
-    if (def.needs === 'steel') rich = p.deposits.steel;
-    if (def.needs === 'oil') rich = p.deposits.oil;
+    if (def.consumes) for (const k of Object.keys(def.consumes)) eff *= ratioOf(k);
+    const rich = def.needs ? p.deposits[def.needs] || 0 : 1;
     b.eff = eff;
     if (def.consumes) for (const [k, v] of Object.entries(def.consumes)) { s[k] = Math.max(0, s[k] - v * b.level * eff); flow[k].cons += v * b.level * eff; }
     if (def.produces) for (const [k, v] of Object.entries(def.produces)) { s[k] += v * b.level * eff * rich; flow[k].prod += v * b.level * eff * rich; }
@@ -316,8 +320,11 @@ function botWeight(s, p, type) {
     case 'mine': return s.energy.ratio < 0.7 ? 0.3 : s.steel < 400 ? 4 : s.steel > 3000 ? 0 : 0.5;
     case 'steelworks': return s.fuel > 500 && s.steel < 1500 && s.energy.ratio > 0.8 ? 2 : 0.05;
     case 'refinery': return s.fuel < 300 ? (lowE ? 8 : 4) : s.fuel > 3000 ? 0 : 0.3;
+    case 'goldmine': return s.energy.ratio < 0.7 ? 0.1 : s.gold > 1200 ? 0 : s.gold < 200 ? 2 : 0.4;
+    case 'raremine': return s.energy.ratio < 0.7 ? 0.1 : s.rare > 900 ? 0 : s.rare < 150 ? 2.2 : 0.4;
     case 'electronics':
       if (s.electronics > 400) return 0;
+      if (s.gold < 20 || s.rare < 20) return 0.08;
       return s.steel > 250 && s.energy.ratio > 0.9 ? 1.5 : 0.1;
     default: return 1;
   }
@@ -358,15 +365,15 @@ function botStep(g, s) {
 export function serialize(g) {
   return JSON.stringify({
     v: g.v, seed: g.seed, day: g.day, difficulty: g.difficulty, playerState: g.playerState,
-    states: g.states, provs: g.provs,
+    states: g.states, provs: g.provs, dip: g.dip,
   });
 }
 export function deserialize(text) {
   const d = JSON.parse(text);
-  if (d.v !== 2) throw new Error('Неизвестная версия сохранения');
+  if (d.v !== 3) throw new Error('Неизвестная версия сохранения');
   const world = generateWorld(d.seed);
   const g = { ...d, world, nbrs: world.nbrs, events: [] };
-  for (const st of g.states) st.flow ||= emptyFlow();
+  for (const st of g.states) { st.flow ||= emptyFlow(); st.trade ||= zeroRes(); }
   assignSpots(g);
   return g;
 }

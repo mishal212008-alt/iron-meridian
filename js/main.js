@@ -6,7 +6,10 @@ import { MapView } from './render.js';
 import { TEX, paintTerrainAsync } from './terrain.js';
 import { slots } from './sim.js';
 import { BUILDINGS, RES_ICON } from './data.js';
-import { buildHtml, cardHtml, cityHtml, fmt, prodHtml, resHtml, resbarHtml, stateHtml, startHtml } from './ui.js';
+import { buildHtml, cardHtml, cityHtml, dipHtml, fmt, prodHtml, resHtml, resbarHtml, stateHtml, startHtml } from './ui.js';
+import {
+  answerOffer, breakPact, cancelDeal, declareWar, fairPrice, gift, propose, setBorder, valueFor,
+} from './diplomacy.js';
 
 const $ = (id) => document.getElementById(id);
 let game = null;
@@ -19,6 +22,7 @@ let last = 0;
 let looping = false;
 let panelDirty = false;
 let panelAt = 0;
+const dipUi = { target: -1, result: null, form: { dir: 'sell', res: 'gold', amt: 6, price: 18, days: 30 } };
 let placing = null; // { type, x, z, pid, err }
 
 const wide = () => !!(window.matchMedia && window.matchMedia('(min-width: 900px)').matches);
@@ -75,6 +79,7 @@ async function begin() {
   }
   view.onTap = onTap;
   placing = null;
+  dipUi.target = -1; dipUi.result = null;
   selected = -1;
   tab = null;
   speedIdx = 1;
@@ -107,7 +112,7 @@ function startPlacing(type, focusAt) {
   tab = null;
   placing = { type, x: null, z: null, pid: -1, err: 'Коснись карты на своей территории' };
   if (view) {
-    view.setPins(type === 'mine' ? 'steel' : type === 'refinery' ? 'oil' : null);
+    view.setPins(BUILDINGS[type].needs || null);
     view.setGhost(null);
     if (focusAt) view.focusAt(focusAt[0], focusAt[1], Math.max(14, view.fitDist * 0.25));
     else {
@@ -144,7 +149,8 @@ function select(id, focus = false) {
   if (id >= 0) {
     if (focus) view.focus(game.provs[id]);
     if (tab === null && wide()) tab = 'city';
-    if (tab === 'prod' || tab === 'state' || tab === 'res') tab = 'city';
+    if (tab === 'dip') { const o = game.provs[id].owner; if (o !== game.playerState) { dipUi.target = o; dipUi.result = null; } }
+    else if (tab === 'prod' || tab === 'state' || tab === 'res') tab = 'city';
   }
   refreshPanel();
 }
@@ -155,6 +161,8 @@ function refreshTop() {
   $('state-name').style.color = s.color;
   $('day').textContent = 'День ' + game.day;
   $('resbar').innerHTML = resbarHtml(game);
+  const nOff = game.dip.offers.filter((o) => o.to === game.playerState).length;
+  $('dip-badge').textContent = nOff; $('dip-badge').classList.toggle('hidden', !nOff);
   document.querySelectorAll('#speeds button').forEach((b) => {
     b.classList.toggle('on', Number(b.dataset.speed) === speedIdx);
   });
@@ -171,7 +179,7 @@ function refreshPanel() {
     const top = el.scrollTop;
     const html = tab === 'city' ? cityHtml(game, p)
       : tab === 'build' ? buildHtml(game, p)
-        : tab === 'prod' ? prodHtml(game) : tab === 'res' ? resHtml(game) : stateHtml(game);
+        : tab === 'prod' ? prodHtml(game) : tab === 'res' ? resHtml(game) : tab === 'dip' ? dipHtml(game, dipUi) : stateHtml(game);
     el.innerHTML = html;
     $('panel').classList.remove('hidden');
     el.scrollTop = top;
@@ -221,6 +229,38 @@ function loop(t) {
 }
 
 // ---- события ----
+
+function dipAction(act, el) {
+  const me = game.playerState, t = dipUi.target, f = dipUi.form;
+  const res = (r) => { dipUi.result = r; };
+  if (act === 'dip-open') { tab = 'dip'; dipUi.target = Number(el.dataset.id); dipUi.result = null; if (placing) stopPlacing(); }
+  else if (act === 'dip-back') { dipUi.target = -1; dipUi.result = null; }
+  else if (act === 'offer-yes' || act === 'offer-no') {
+    const r = answerOffer(game, Number(el.dataset.id), act === 'offer-yes');
+    toast(r.msg);
+  } else if (act === 'dip-border') res(setBorder(game, me, t, el.dataset.closed === '1'));
+  else if (act === 'dip-pact') res(propose(game, me, t, el.dataset.kind));
+  else if (act === 'dip-break') { if (confirm('Расторгнуть договор? Отношения ухудшатся.')) res(breakPact(game, me, t)); }
+  else if (act === 'dip-war') { if (confirm('Объявить войну? Границы закроются, сделки расторгнутся, союзники отвернутся.')) res(declareWar(game, me, t)); }
+  else if (act === 'dip-gift') res(gift(game, me, t, 100));
+  else if (act === 'dip-cancel') { cancelDeal(game, Number(el.dataset.id), me); dipUi.result = { ok: true, msg: 'Сделка расторгнута', reasons: [] }; }
+  else if (act === 'dip-dir') { f.dir = el.dataset.dir; }
+  else if (act === 'dip-res') { f.res = el.dataset.res; f.price = Math.round(fairPrice(f.res) * 2) / 2; }
+  else if (act === 'dip-amt') f.amt = Math.max(2, Math.min(60, f.amt + Number(el.dataset.d)));
+  else if (act === 'dip-price') f.price = Math.max(0.5, Math.round((f.price + Number(el.dataset.d)) * 10) / 10);
+  else if (act === 'dip-days') f.days = Number(el.dataset.days);
+  else if (act === 'dip-hint') { f.res = el.dataset.res; f.dir = el.dataset.dir; f.price = Number(el.dataset.price); }
+  else if (act === 'dip-send') {
+    const seller = f.dir === 'sell' ? me : t, buyer = f.dir === 'sell' ? t : me;
+    if (game.states[seller][f.res] < f.amt) { res({ ok: false, msg: 'У продавца не хватает товара на складе', reasons: [] }); }
+    else {
+      const r = propose(game, me, t, 'deal', { seller, buyer, res: f.res, amt: f.amt, price: f.price, days: f.days });
+      res(r);
+      if (r.ok) toast('🤝 ' + r.msg);
+    }
+  }
+  refreshAll();
+}
 
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]');
@@ -283,6 +323,8 @@ document.addEventListener('click', (e) => {
     if (confirm('Начать новую игру? Несохранённый прогресс пропадёт.')) { showStart(); }
   } else if (act === 'fit') {
     if (view) view.fit();
+  } else if (act.startsWith('dip-') || act.startsWith('offer-')) {
+    dipAction(act, el);
   }
 });
 

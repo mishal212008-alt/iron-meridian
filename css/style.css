@@ -202,3 +202,45 @@ h3 small { font-weight: 400; color: var(--muted); }
   #pbody { font-size: 15px; }
 }
 @media (max-width: 899px) and (orientation: landscape) { #pbody { padding-bottom: 14px; } }
+
+/* дипломатия */
+#rail button { position: relative; }
+.badge { position: absolute; top: 4px; right: 6px; min-width: 18px; height: 18px; border-radius: 9px; background: var(--neg); color: #fff; font-size: 11px; line-height: 18px; text-align: center; padding: 0 4px; }
+.dipcard { width: 100%; text-align: left; background: linear-gradient(var(--panel2), #14212b); border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; display: block; }
+.dipcard:active { background: var(--accent-d); }
+.dc-h { display: flex; justify-content: space-between; align-items: center; }
+.dc-r { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 13px; justify-content: space-between; }
+.dc-f { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+.dc-n { font-size: 13px; margin-top: 4px; min-height: 1px; }
+.stat { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding: 2px 8px; border-radius: 10px; background: #243442; color: var(--muted); }
+.stat.friend { background: #1d4a3a; color: var(--pos); } .stat.ally { background: #1e3f66; color: #8cc4ff; } .stat.war { background: #5a1f1f; color: var(--neg); }
+.relbar { position: relative; height: 8px; border-radius: 5px; background: var(--panel); border: 1px solid #1f3342; flex: 1; min-width: 80px; margin: 6px 0; }
+.relbar i { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
+.relbar i.ok { background: var(--pos); } .relbar i.mid { background: var(--amber); } .relbar i.bad { background: var(--neg); }
+.relbar u { position: absolute; top: -3px; width: 4px; height: 14px; background: #fff; border-radius: 2px; transform: translateX(-2px); }
+.relbar::after { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #4a6070; }
+.offer { background: var(--panel2); border: 1px solid var(--amber); border-radius: 12px; padding: 10px; margin-bottom: 8px; }
+.offer .two { margin-top: 8px; }
+.small { font-size: 12px; }
+.col { display: flex; flex-direction: column; gap: 6px; }
+.col .btn { width: 100%; }
+.btn.danger { color: var(--neg); border-color: #6a2d2d; }
+.backbtn { margin: 6px 0; }
+.deps { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 15px; } .deps .none { opacity: .45; }
+.rrow2 { display: grid; grid-template-columns: 1.6fr 1fr .6fr 1fr; gap: 4px; font-size: 12px; padding: 4px 6px; border-bottom: 1px solid #1a2a36; align-items: center; }
+.rsub { font-size: 12px; color: var(--muted); padding: 0 8px 3px; }
+.dlog { font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
+.hints { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
+.hint { text-align: left; background: #1b3a36; border: 1px solid var(--accent-d); border-radius: 9px; padding: 8px 10px; font-size: 13px; }
+.hint small { display: block; color: var(--muted); }
+.seg { display: flex; gap: 4px; margin: 6px 0; }
+.seg button { flex: 1; background: var(--panel2); border: 1px solid var(--line); border-radius: 9px; padding: 9px 4px; font-size: 14px; min-height: 42px; }
+.seg button.on { background: var(--accent); color: #031a17; border-color: var(--accent); font-weight: 700; }
+.seg.res button { display: flex; flex-direction: column; align-items: center; font-size: 18px; line-height: 1.1; padding: 5px 2px; }
+.seg.res small { font-size: 10px; opacity: .8; }
+.stepper { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.stepper span { flex: 1; font-size: 13px; color: var(--muted); }
+.stepper button { width: 44px; height: 44px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); font-size: 22px; }
+.stepper b { min-width: 64px; text-align: center; font-size: 17px; }
+.deal-sum { margin: 8px 0; padding: 8px 10px; background: var(--panel2); border-radius: 9px; font-size: 14px; }
+.warn { color: var(--warn); }

@@ -1,6 +1,6 @@
 // Данные игры «Железный Меридиан». Всё, что можно настраивать, лежит здесь.
 
-export const VERSION = '0.5.0 (большая карта, телефонный интерфейс, дороги)';
+export const VERSION = '0.6.0 (дипломатия, границы и КПП, золото и редкие металлы)';
 
 
 // Вымышленные названия провинций
@@ -16,23 +16,49 @@ export const NAMES = [
   'Альтенау', 'Бирнхольм', 'Ворхейм', 'Грюнвальд', 'Дрезден-Ост', 'Ильмар', 'Каррен', 'Лоренсбург', 'Мельхиор', 'Нордвальд', 'Оттенхейм', 'Пирсвик', 'Равенхолл', 'Свенборг', 'Тирнау', 'Эйнхольм', 'Ястребиный Мыс', 'Белая Гавань', 'Серебряный Ключ', 'Железный Брод', 'Каменка', 'Озёрный', 'Приморск-Ост', 'Северный Предел', 'Тихая Бухта', 'Золотая Долина', 'Ветролом', 'Громовая', 'Дубрава', 'Еловая', 'Ясный Берег', 'Волчий Лог', 'Зелёный Холм', 'Лунная Пристань', 'Медный Рудник', 'Новый Стрелецк', 'Орлиное', 'Рассвет', 'Соколиный', 'Туманный', 'Угольный', 'Хрустальный', 'Чёрная Скала', 'Шторм-Бей', 'Янтарная', 'Арден-Тор', 'Брекенридж', 'Валлорн', 'Гэлвей-Ост', 'Дорнхейм', 'Эстуария', 'Форт-Рейн', 'Гранитный', 'Хэвенмор', 'Ирония', 'Кингсмарк', 'Ластхольм', 'Монтерра', 'Нордкап', 'Окрестность', 'Портеро', 'Квартхейм', 'Ривервуд', 'Сансет-Холл', 'Тэрнбридж',
 ];
 
-export const RES = ['money', 'steel', 'fuel', 'electronics'];
+export const RES = ['money', 'steel', 'fuel', 'electronics', 'gold', 'rare'];
+export const TRADE_RES = ['steel', 'fuel', 'electronics', 'gold', 'rare']; // то, чем можно торговать
 export const RES_LABEL = {
   money: 'Деньги',
   steel: 'Сталь',
   fuel: 'Топливо',
   electronics: 'Электроника',
+  gold: 'Золото',
+  rare: 'Редкие металлы',
   energy: 'Энергия',
 };
-export const RES_ICON = { money: '💰', steel: '🔩', fuel: '⛽', electronics: '🔌', energy: '⚡' };
+export const RES_ICON = { money: '💰', steel: '🔩', fuel: '⛽', electronics: '🔌', gold: '🪙', rare: '💎', energy: '⚡' };
+// Справочная цена за единицу (деньги). От неё считаются все сделки.
+export const BASE_PRICE = { steel: 4, fuel: 5, electronics: 22, gold: 18, rare: 14 };
+
+// Месторождения: что это, чем добывается
+export const DEPOSITS = {
+  steel: { name: 'Руда', icon: '⛰️', building: 'mine' },
+  oil: { name: 'Нефть', icon: '🛢', building: 'refinery' },
+  gold: { name: 'Золото', icon: '🪙', building: 'goldmine' },
+  rare: { name: 'Редкие металлы', icon: '💎', building: 'raremine' },
+};
+export const DEPOSIT_KINDS = Object.keys(DEPOSITS);
 
 // Вымышленные государства (без реальных флагов и названий)
 export const STATES_DEF = [
-  { id: 0, name: 'Нордия', color: '#5b8fd9', desc: 'Холодный север: много стали, суровая экономика.' },
-  { id: 1, name: 'Аурелия', color: '#d9a441', desc: 'Богатое побережье: торговая республика.' },
-  { id: 2, name: 'Каспия', color: '#c4574f', desc: 'Нефтяная федерация: много топлива.' },
-  { id: 3, name: 'Венедия', color: '#6aa86a', desc: 'Лесной союз: сбалансированная держава.' },
+  { id: 0, name: 'Нордия', color: '#5b8fd9', desc: 'Холодный север: много руды и редких металлов, мало нефти, нет золота.',
+    deposits: { steel: 'A', rare: 'A', oil: 'S', gold: 0 }, trait: { greed: 1.0, hostile: 0.5 } },
+  { id: 1, name: 'Аурелия', color: '#d9a441', desc: 'Торговая республика: золото и нефть, но нет руды.',
+    deposits: { gold: 'A', oil: 'A', rare: 'S', steel: 0 }, trait: { greed: 1.25, hostile: 0.2 } },
+  { id: 2, name: 'Каспия', color: '#c4574f', desc: 'Нефтяная федерация: нефть и руда, нет редких металлов.',
+    deposits: { oil: 'A', steel: 'A', gold: 'S', rare: 0 }, trait: { greed: 0.9, hostile: 0.8 } },
+  { id: 3, name: 'Венедия', color: '#6aa86a', desc: 'Лесной союз: золото и редкие металлы, мало нефти и руды.',
+    deposits: { gold: 'A', rare: 'A', steel: 'S', oil: 'S' }, trait: { greed: 1.0, hostile: 0.3 } },
 ];
+// 'A' — богатые недра (несколько месторождений), 'S' — одно скромное, 0 — нет совсем.
+
+// Дипломатия: базовое отношение пар государств (к нему тянется со временем) и параметры
+export const DIP_BASE = { '0-1': 15, '0-2': -25, '0-3': 10, '1-2': 5, '1-3': 28, '2-3': -12 };
+export const DIP = {
+  friendMin: 20, allyMin: 55, tradeBonus: 0.12, closedTension: 0.35,
+  offerLife: 14, warPeaceDays: 40, giftRel: 6,
+};
 
 export const TERRAIN = {
   plains: { name: 'Равнина', color: '#7e9a5a' },
@@ -42,7 +68,7 @@ export const TERRAIN = {
 };
 
 // Стартовые ресурсы любого государства
-export const START = { money: 700, steel: 110, fuel: 90, electronics: 0 };
+export const START = { money: 700, steel: 110, fuel: 90, electronics: 0, gold: 15, rare: 10 };
 
 // Здания.
 // cost — цена 1 уровня (каждый следующий дороже в LEVEL_COST_MULT раз)
@@ -79,14 +105,24 @@ export const BUILDINGS = {
     jobs: 450, energy: 12, consumes: { fuel: 3 }, produces: { steel: 9 },
     desc: 'Плавит сталь из топлива. Не зависит от руды, но жжёт топливо.',
   },
+  goldmine: {
+    name: 'Золотой рудник', icon: '🪙', cost: { money: 700, steel: 30 }, days: 9,
+    jobs: 280, energy: 6, produces: { gold: 4 }, needs: 'gold',
+    desc: 'Добывает золото. Нужно месторождение золота. Золото ценится в торговле.',
+  },
+  raremine: {
+    name: 'Рудник редких металлов', icon: '💎', cost: { money: 800, steel: 40 }, days: 10,
+    jobs: 300, energy: 7, produces: { rare: 3 }, needs: 'rare',
+    desc: 'Добывает редкие металлы для электроники.',
+  },
   electronics: {
     name: 'Завод электроники', icon: '🔌', cost: { money: 1000, steel: 80 }, days: 12,
-    jobs: 400, energy: 10, consumes: { steel: 4 }, produces: { electronics: 3 },
-    desc: 'Делает электронику из стали. Нужна для техники и ракет.',
+    jobs: 400, energy: 10, consumes: { steel: 4, gold: 0.5, rare: 0.8 }, produces: { electronics: 3 },
+    desc: 'Сталь, золото и редкие металлы → электроника. Нужна для техники и ракет.',
   },
 };
 
-export const BUILD_ORDER = ['housing', 'power', 'mine', 'refinery', 'steelworks', 'electronics'];
+export const BUILD_ORDER = ['housing', 'power', 'mine', 'refinery', 'goldmine', 'raremine', 'steelworks', 'electronics'];
 
 // Города: уровень зависит от населения, определяет число слотов
 export const CITY_LEVELS = [

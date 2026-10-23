@@ -163,6 +163,18 @@ export function makePainter(world, stateColors, tex = TEX) {
         stamp(d.steel[0] + Math.cos(a) * r, d.steel[1] + Math.sin(a) * r, (0.3 + rng() * 0.35) * (tex / SZ), k % 3 === 0 ? [186, 120, 62] : [96, 88, 82], 0.8);
       }
     }
+    if (p.deposits.gold && d.gold) {
+      for (let k = 0; k < 8; k++) {
+        const a = rng() * 6.28, r = rng() * 0.9;
+        stamp(d.gold[0] + Math.cos(a) * r, d.gold[1] + Math.sin(a) * r, (0.22 + rng() * 0.3) * (tex / SZ), k % 2 ? [226, 186, 70] : [120, 104, 74], 0.82);
+      }
+    }
+    if (p.deposits.rare && d.rare) {
+      for (let k = 0; k < 8; k++) {
+        const a = rng() * 6.28, r = rng() * 0.9;
+        stamp(d.rare[0] + Math.cos(a) * r, d.rare[1] + Math.sin(a) * r, (0.22 + rng() * 0.3) * (tex / SZ), k % 2 ? [96, 130, 196] : [88, 80, 110], 0.8);
+      }
+    }
     if (p.deposits.oil && d.oil) {
       const R = p.deposits.oil > 1 ? 1.3 : 0.95;
       for (let k = 0; k < 7; k++) {

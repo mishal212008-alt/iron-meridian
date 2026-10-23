@@ -5,6 +5,8 @@ import {
   CELL, HEIGHT_SCALE, WORLD, fromGrid, gridSample, provAt, surfaceFromH, surfaceY, territoryAt,
 } from './world.js';
 import { SEL_TEX, TEX, makeDetail, paintSelection, paintTerrain } from './terrain.js';
+import { isClosed } from './diplomacy.js';
+import { BUILDINGS, DEPOSITS, DEPOSIT_KINDS } from './data.js';
 
 const { SZ, HALF } = WORLD;
 const DEG = Math.PI / 180;
@@ -156,7 +158,20 @@ function modelSteelworks(level) {
   g.userData.smoke = [[-0.18, 0.55, -0.08], [0.25, 0.55, 0.0]];
   return g;
 }
-const MODELS = { housing: modelHousing, mine: modelMine, refinery: modelRefinery, power: modelPower, electronics: modelElectronics, steelworks: modelSteelworks };
+function modelGoldmine(level) {
+  const g = modelMine(level);
+  g.add(box(0.2, 0.012, 0.16, 0xe3b02f, 0.07, 0.17, 0.1));   // золотая кровля
+  for (let i = 0; i < 3; i++) g.add(box(0.05, 0.04, 0.04, 0xf2c94c, 0.28 + i * 0.045, 0.025, 0.2 - (i % 2) * 0.04));
+  g.add(box(0.07, 0.05, 0.05, 0xf2c94c, -0.12, 0.06, 0.215));
+  return g;
+}
+function modelRaremine(level) {
+  const g = modelMine(level);
+  g.add(box(0.2, 0.012, 0.16, 0x4a6fb5, 0.07, 0.17, 0.1));
+  for (let i = 0; i < 3; i++) g.add(cone(0.035, 0.12 + i * 0.03, i % 2 ? 0x8f7fe0 : 0x58c5e8, 0.26 + i * 0.06, 0.025, 0.22 - (i % 2) * 0.05, 5));
+  return g;
+}
+const MODELS = { housing: modelHousing, mine: modelMine, goldmine: modelGoldmine, raremine: modelRaremine, refinery: modelRefinery, power: modelPower, electronics: modelElectronics, steelworks: modelSteelworks };
 
 function scaffold() {
   const g = new THREE.Group();
@@ -178,6 +193,18 @@ function depositModel(kind) {
     };
     g.add(rock(0.42, 0, 0, 0x7a6f64)); g.add(rock(0.3, 0.45, 0.2, 0x6f665d)); g.add(rock(0.22, -0.3, 0.38, 0x857a6e));
     g.add(rock(0.16, 0.18, -0.3, 0xd98e3f, { emissive: 0x4a2a08 }));
+  } else if (kind === 'gold') {
+    const rock = (sc, x, z, c, extra) => {
+      const m = new THREE.Mesh(geo('rock', () => new THREE.IcosahedronGeometry(1, 0)), mat(c, extra));
+      m.scale.set(sc, sc * 0.7, sc * 0.9); m.position.set(x, sc * 0.35, z); return m;
+    };
+    g.add(rock(0.38, 0, 0, 0x8a7d5c)); g.add(rock(0.26, 0.4, 0.22, 0x7a6f52));
+    for (const [x, z, sc] of [[0.1, 0.3, 0.13], [-0.25, 0.1, 0.1], [0.3, -0.2, 0.12], [-0.05, -0.3, 0.09]]) g.add(rock(sc, x, z, 0xf2c94c, { emissive: 0x6a4a00 }));
+  } else if (kind === 'rare') {
+    g.add(cyl(0.34, 0.02, 0x4b4660, 0, 0, 0, 12));
+    for (const [x, z, h, c] of [[0, 0, 0.5, 0x58c5e8], [0.22, 0.1, 0.35, 0x8f7fe0], [-0.2, 0.15, 0.32, 0x6ad7d0], [0.05, -0.25, 0.28, 0xa68cf0], [-0.15, -0.12, 0.4, 0x58c5e8]]) {
+      g.add(cone(0.07, h, c, x, 0.02, z, 5));
+    }
   } else {
     g.add(cyl(0.38, 0.02, 0x1a1a22, 0, 0, 0, 18));
     g.add(cyl(0.05, 0.6, 0x2a2a30, 0.1, 0, 0, 6));
@@ -219,6 +246,7 @@ const bakedMat = () => (bakedMaterial ||= new THREE.MeshStandardMaterial({
 
 const WALLS = [0xe9dfca, 0xdacfb6, 0xcdc1a2, 0xf0e8d8, 0xcfae8e, 0xd8d2c6];
 const TALL = [0xa9bccb, 0xbfc9d0, 0xd8d3c6, 0x9fb0b8];
+const territoryAtOwner = (w, x, z) => territoryAt(w, x, z)[3];
 const CAR_COLORS = [0xd8433a, 0x2f6fd0, 0xe9e9ec, 0x2b2d33, 0xe3b02f, 0x3c9a5a];
 
 // лента вдоль поверхности (дороги и улицы). acc — накопитель вершин.
@@ -318,6 +346,7 @@ export class MapView {
     this.buildTerrain();
     this.buildTrees();
     this.buildRoads();
+    this.buildBorders();
 
     this.selData = new Uint8Array(SEL_TEX * SEL_TEX * 4);
     this.selTex = new THREE.DataTexture(this.selData, SEL_TEX, SEL_TEX, THREE.RGBAFormat, THREE.UnsignedByteType);
@@ -405,9 +434,19 @@ export class MapView {
     const w = this.wd;
     const pines = [], oaks = [], peaks = [], bushes = [];
     const STEP = 0.5;
+    // просеки: вдоль границ, дорог и вокруг КПП деревья не растут
+    const clear = new Set();
+    const mark = (x, z, r) => {
+      const cx = Math.floor((x + HALF) / STEP), cz = Math.floor((z + HALF) / STEP);
+      for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) clear.add((cz + dz) * 1000 + cx + dx);
+    };
+    for (const b of w.borders || []) for (const [x, z] of b.pts) mark(x, z, 1);
+    for (const r of w.roads) for (const [x, z] of r.pts) mark(x, z, 0);
+    for (const c of w.checkpoints || []) mark(c.x, c.z, 3);
     for (let gz = 0; gz < SZ / STEP; gz++) {
       for (let gx = 0; gx < SZ / STEP; gx++) {
         const k = gz * 1000 + gx;
+        if (clear.has(k)) continue;
         const x = -HALF + (gx + hash(k) * 0.9) * STEP, z = -HALF + (gz + hash(k + 0.5) * 0.9) * STEP;
         const hv = gridSample(w.h, x, z);
         if (hv > 0.012 && hv < 0.3) {
@@ -503,6 +542,145 @@ export class MapView {
     });
   }
 
+  // государственные границы: полоса, забор с колючкой, вышки; КПП на дорогах
+  buildBorders() {
+    const w = this.wd, g = this.g;
+    this.borderGroup = new THREE.Group();
+    this.root.add(this.borderGroup);
+    const acc = newAcc();
+    const cps = w.checkpoints || [];
+    const nearCp = (x, z, r) => cps.some((c) => Math.hypot(c.x - x, c.z - z) < r);
+    const pos = [], col = [];
+    const quad = (x0, z0, x1, z1, y0, y1, c) => {
+      const cc = new THREE.Color(c);
+      const a = surfaceY(w, x0, z0), b = surfaceY(w, x1, z1);
+      pos.push(x0, a + y0, z0, x1, b + y0, z1, x1, b + y1, z1, x0, a + y0, z0, x1, b + y1, z1, x0, a + y1, z0);
+      for (let i = 0; i < 6; i++) col.push(cc.r, cc.g, cc.b);
+    };
+    const posts = [], towers = new THREE.Group();
+    let towerAt = 0;
+    for (const bd of w.borders || []) {
+      addStrip(acc, w, bd.pts, 0.8, 0.044, 0x9b8c68);   // контрольно-следовая полоса
+      addStrip(acc, w, bd.pts, 0.09, 0.07, 0x23262a);    // линия границы
+      // равномерная выборка вдоль ломаной
+      const samples = [];
+      let carry = 0;
+      for (let i = 0; i < bd.pts.length - 1; i++) {
+        const [ax, az] = bd.pts[i], [bx, bz] = bd.pts[i + 1], l = Math.hypot(bx - ax, bz - az);
+        for (let d = carry; d < l; d += 0.42) samples.push([ax + ((bx - ax) * d) / l, az + ((bz - az) * d) / l]);
+        carry = ((carry - l) % 0.42 + 0.42) % 0.42;
+      }
+      for (let i = 0; i < samples.length - 1; i++) {
+        const [x0, z0] = samples[i], [x1, z1] = samples[i + 1];
+        if (nearCp((x0 + x1) / 2, (z0 + z1) / 2, 0.85)) continue;
+        if (gridSample(w.h, x0, z0) < 0.005) continue;
+        quad(x0, z0, x1, z1, 0.0, 0.38, 0x8c938c);
+        quad(x0, z0, x1, z1, 0.38, 0.44, 0x3a3d40);
+        quad(x0, z0, x1, z1, 0.44, 0.52, 0xd5d8dc);   // колючая проволока поверху
+        if (i % 2 === 0) posts.push([x0, z0]);
+        if (++towerAt % 34 === 0 && !nearCp(x0, z0, 2.2)) {
+          const t = new THREE.Group();
+          const side = (towerAt / 34) % 2 ? bd.a : bd.b;
+          const roofCol = side >= 0 && side < g.states.length ? HEX(g.states[side].color) : 0x777777;
+          for (const [lx, lz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) t.add(box(0.02, 0.4, 0.02, 0x5b5f55, lx * 0.07, 0, lz * 0.07));
+          t.add(box(0.2, 0.12, 0.2, 0x6c7468, 0, 0.4, 0));
+          t.add(box(0.26, 0.03, 0.26, roofCol, 0, 0.52, 0));
+          t.add(box(0.12, 0.03, 0.04, 0x2b2f33, 0, 0.44, 0.1));
+          t.position.set(x0, surfaceY(w, x0, z0), z0);
+          t.scale.setScalar(2.2);
+          towers.add(t);
+        }
+      }
+    }
+    const sm = stripMesh(acc);
+    if (sm) this.borderGroup.add(sm);
+    if (pos.length) {
+      const bg = new THREE.BufferGeometry();
+      bg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+      bg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(col), 3));
+      const m = new THREE.Mesh(bg, bakedMat()); m.frustumCulled = false;
+      this.borderGroup.add(m);
+    }
+    if (posts.length) {
+      const im = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0x40453f, flatShading: true }), posts.length);
+      const d = new THREE.Object3D();
+      posts.forEach(([x, z], i) => { d.position.set(x, surfaceY(w, x, z) + 0.28, z); d.scale.set(0.08, 0.56, 0.08); d.updateMatrix(); im.setMatrixAt(i, d.matrix); });
+      im.frustumCulled = false;
+      this.borderGroup.add(im);
+    }
+    const tb = bake(towers);
+    if (tb) this.borderGroup.add(tb);
+
+    // КПП
+    const stat = new THREE.Group();
+    this.cps = [];
+    for (const c of cps) {
+      const nx = -c.tz, nz = c.tx;
+      const sideA = territoryAtOwner(w, c.x + nx * 0.9, c.z + nz * 0.9);
+      const sideB = territoryAtOwner(w, c.x - nx * 0.9, c.z - nz * 0.9);
+      const cg = new THREE.Group();
+      cg.position.set(c.x, surfaceY(w, c.x, c.z), c.z);
+      cg.rotation.y = Math.atan2(-nz, nx);
+      cg.scale.setScalar(1.6);
+      cg.add(box(1.7, 0.016, 1.3, 0x3a3e43, 0, 0.06, 0));
+      for (const [v, st] of [[0.66, sideA], [-0.66, sideB]]) {
+        const sc = st >= 0 && st < g.states.length ? HEX(g.states[st].color) : 0x888888;
+        cg.add(box(0.3, 0.26, 0.3, 0xdfe3e6, v, 0.07, 0.38));
+        cg.add(box(0.36, 0.04, 0.36, sc, v, 0.33, 0.38));
+        cg.add(box(0.12, 0.08, 0.02, 0x2a3440, v, 0.17, 0.54));
+        cg.add(cyl(0.012, 0.62, 0xdddddd, v, 0.07, -0.42, 6));
+        cg.add(box(0.22, 0.13, 0.012, sc, v + (v > 0 ? -0.12 : 0.12), 0.55, -0.42));
+        // мешки с песком и ограждение
+        cg.add(box(0.26, 0.06, 0.07, 0x9c8e6a, v, 0.07, -0.18));
+      }
+      stat.add(cg);
+      // стрела шлагбаума: от будки стороны A поперёк дороги
+      const arm = new THREE.Group();
+      arm.position.set(0.66 - 0.16, 0.2, 0.02);
+      arm.rotation.y = Math.atan2(-nz, nx);
+      arm.position.set(c.x + nx * 0.8, surfaceY(w, c.x, c.z) + 0.34, c.z + nz * 0.8);
+      arm.scale.setScalar(1.6);
+      const piv = new THREE.Group();
+      for (let k = 0; k < 6; k++) piv.add(box(0.17, 0.04, 0.04, k % 2 ? 0xf2f2f2 : 0xd23b32, -0.17 * (k + 0.5), -0.02, 0));
+      const lamp = new THREE.Mesh(new THREE.IcosahedronGeometry(0.05, 0), new THREE.MeshBasicMaterial({ color: 0xff3b30 }));
+      lamp.position.set(0.03, 0.1, 0);
+      piv.add(lamp);
+      arm.add(piv);
+      this.borderGroup.add(arm);
+      this.cps.push({ cp: c, arm, piv, lamp, cur: 0, target: 0 });
+    }
+    const sb = bake(stat);
+    if (sb) this.borderGroup.add(sb);
+    this.dipRev = -1;
+    this.updateCheckpoints(true);
+  }
+
+  // шлагбаумы: закрытые поперёк дороги, открытые подняты; машины не едут через закрытые КПП
+  updateCheckpoints(instant = false) {
+    const g = this.g;
+    if (!g.dip || !this.cps) return;
+    this.dipRev = g.dip.rev;
+    this.roadBlocks = this.wd.roads.map(() => []);
+    for (const c of this.cps) {
+      const closed = isClosed(g, c.cp.a, c.cp.b);
+      c.target = closed ? 0 : 1;
+      if (instant) c.cur = c.target;
+      c.lamp.material.color.setHex(closed ? 0xff3b30 : 0x35d36b);
+      if (closed) this.roadBlocks[c.cp.road].push(c.cp.s);
+    }
+    for (const arr of this.roadBlocks) arr.sort((a, b) => a - b);
+    this.applyArms();
+    this.dirty = true;
+  }
+  applyArms() {
+    let moving = false;
+    for (const c of this.cps) {
+      if (Math.abs(c.cur - c.target) > 0.001) { c.cur += Math.sign(c.target - c.cur) * Math.min(0.08, Math.abs(c.target - c.cur)); moving = true; }
+      c.piv.rotation.z = -c.cur * 1.25;
+    }
+    return moving;
+  }
+
   // машины на дорогах
   buildCars() {
     this.cars = [];
@@ -530,8 +708,17 @@ export class MapView {
     const w = this.wd;
     this.cars.forEach((car, i) => {
       const cum = this.roadLen[car.ri], pts = w.roads[car.ri].pts, total = cum[cum.length - 1];
-      let d = (car.s + car.v * time) % (total * 2); if (d < 0) d += total * 2;
-      const dist = d <= total ? d : total * 2 - d, fwd = d <= total;
+      let lo = 0, hi = total;
+      const bl = this.roadBlocks && this.roadBlocks[car.ri];
+      if (bl && bl.length) {
+        const s0 = car.s % total;
+        for (const b of bl) { if (b < s0) lo = Math.max(lo, b + 0.55); else hi = Math.min(hi, b - 0.55); }
+        if (hi - lo < 0.6) hi = lo + 0.6;
+      }
+      const L = hi - lo;
+      let d = ((((car.s % total) - lo) + car.v * time) % (L * 2) + L * 2) % (L * 2);
+      if (car.s % total < lo) d = (car.v * time % (L * 2) + L * 2) % (L * 2);
+      const dist = lo + (d <= L ? d : L * 2 - d), fwd = d <= L;
       let k = 1; while (k < cum.length - 1 && cum[k] < dist) k++;
       const f = (dist - cum[k - 1]) / ((cum[k] - cum[k - 1]) || 1);
       const ax = pts[k - 1][0], az = pts[k - 1][1], bx = pts[k][0], bz = pts[k][1];
@@ -660,7 +847,7 @@ export class MapView {
   }
 
   signature(p) {
-    return p.buildings.map((b) => `${b.type}${b.level}${b.buildLeft > 0 ? 'c' : ''}@${b.x},${b.z}`).join(',') + '|' + (p.deposits.steel ? 's' : '') + (p.deposits.oil ? 'o' : '') + '|' + p.owner;
+    return p.buildings.map((b) => `${b.type}${b.level}${b.buildLeft > 0 ? 'c' : ''}@${b.x},${b.z}`).join(',') + '|' + DEPOSIT_KINDS.map((k) => (p.deposits[k] ? k[0] : '')).join('') + '|' + p.owner;
   }
 
   rebuildCity(p) {
@@ -671,7 +858,7 @@ export class MapView {
     }
     const st = this.g.states[p.owner];
     const sg = new THREE.Group(), fg = new THREE.Group();
-    for (const kind of ['steel', 'oil']) {
+    for (const kind of DEPOSIT_KINDS) {
       const d = p.depositPos && p.depositPos[kind];
       if (!p.deposits[kind] || !d) continue;
       const m = depositModel(kind);
@@ -721,6 +908,8 @@ export class MapView {
 
   sync() {
     const { provs } = this.g;
+    if (this.g.dip && this.g.dip.rev !== this.dipRev) this.updateCheckpoints();
+    if (this.cps && this.cps.length && this.applyArms()) this.dirty = true;
     for (const p of provs) {
       const s = this.signature(p);
       if (s !== this.sig[p.id]) { this.sig[p.id] = s; this.rebuildCity(p); }
@@ -771,12 +960,12 @@ export class MapView {
     });
     this.pins = [];
     for (const p of this.g.provs) {
-      for (const kind of ['steel', 'oil']) {
+      for (const kind of DEPOSIT_KINDS) {
         const d = p.depositPos && p.depositPos[kind];
         if (!p.deposits[kind] || !d) continue;
         const el = document.createElement('div');
         el.className = 'dpin ' + kind;
-        el.textContent = kind === 'steel' ? '⛰️' : '🛢';
+        el.textContent = DEPOSITS[kind].icon;
         el.style.display = 'none';
         this.labelsEl.appendChild(el);
         this.pins.push({ el, p, kind, x: d[0], z: d[1], vis: false });
@@ -817,7 +1006,7 @@ export class MapView {
           vis = true;
           pin.el.style.transform = `translate(-50%,-100%) translate(${((v.x + 1) / 2) * this.w}px,${((1 - v.y) / 2) * this.h}px)`;
           const mine = pin.p.owner === playerState;
-          const used = pin.p.buildings.some((b) => (pin.kind === 'steel' ? b.type === 'mine' : b.type === 'refinery'));
+          const used = pin.p.buildings.some((b) => b.type === DEPOSITS[pin.kind].building);
           const cls = `dpin ${pin.kind}${mine ? ' mine' : ''}${used ? ' used' : ''}`;
           if (pin.cls !== cls) { pin.cls = cls; pin.el.className = cls; pin.el.style.setProperty('--c', states[pin.p.owner].color); }
         }
